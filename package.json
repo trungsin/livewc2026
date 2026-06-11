@@ -1,0 +1,14 @@
+{
+  "name": "livewc2026",
+  "private": true,
+  "version": "1.0.0",
+  "description": "LiveCup — theo dõi World Cup 2026 từ các nguồn dữ liệu public miễn phí",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "wrangler dev --persist-to /tmp/wstate",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.99.0"
+  }
+}
