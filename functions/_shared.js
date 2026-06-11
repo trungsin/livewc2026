@@ -1,18 +1,30 @@
-const http = require("node:http");
-const fs = require("node:fs/promises");
-const path = require("node:path");
+// Logic dùng chung cho Cloudflare Pages Functions — port từ server.js.
+// server.js vẫn dùng cho local dev (node server.js); thư mục functions/ chỉ chạy trên Cloudflare.
 
-const root = __dirname;
-const port = Number(process.env.PORT || 4174);
-const cache = new Map();
+export const SOURCE_URLS = {
+  espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
+  worldcup26Games: "https://worldcup26.ir/get/games",
+  worldcup26Groups: "https://worldcup26.ir/get/groups",
+  worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
+  worldcup26Teams: "https://worldcup26.ir/get/teams",
+  openfootball: "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json"
+};
 
 let localSquads = { updatedAt: "", source: "", teams: [] };
 let squadsByKey = new Map();
+let squadsLoaded = false;
 
-async function loadLocalSquads() {
+export async function ensureLocalSquads(context) {
+  if (squadsLoaded) {
+    return;
+  }
   try {
-    const raw = await fs.readFile(path.join(root, "data", "squads.json"), "utf8");
-    localSquads = JSON.parse(raw);
+    const assetUrl = new URL("/data/squads.json", context.request.url);
+    const response = await context.env.ASSETS.fetch(new Request(assetUrl));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    localSquads = await response.json();
     squadsByKey = new Map();
     for (const team of localSquads.teams || []) {
       squadsByKey.set(canonicalTeamName(team.name), team);
@@ -20,7 +32,7 @@ async function loadLocalSquads() {
         squadsByKey.set(team.fifaCode.toLowerCase(), team);
       }
     }
-    console.log(`Local squads loaded: ${localSquads.teams.length} teams, ${localSquads.teams.reduce((sum, team) => sum + (team.players?.length || 0), 0)} players`);
+    squadsLoaded = true;
   } catch (error) {
     console.warn(`Không nạp được data/squads.json: ${error.message}`);
   }
@@ -32,34 +44,14 @@ function findLocalSquad({ name = "", code = "" } = {}) {
     || null;
 }
 
-const SOURCE_URLS = {
-  espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
-  espnTeams: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams",
-  worldcup26Games: "https://worldcup26.ir/get/games",
-  worldcup26Groups: "https://worldcup26.ir/get/groups",
-  worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
-  worldcup26Teams: "https://worldcup26.ir/get/teams",
-  openfootball: "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json"
-};
-
-const mimeTypes = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp"
-};
-
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+export function jsonResponse(payload, { status = 200, maxAge = 0 } = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": maxAge ? `public, s-maxage=${maxAge}` : "no-store"
+    }
   });
-  res.end(body);
 }
 
 function normalizeStatus(status) {
@@ -503,80 +495,6 @@ function mergePlayers(localPlayers, espnPlayers) {
   return merged;
 }
 
-async function buildTeamPayload({ espnId = "", code = "", name = "" } = {}) {
-  const key = `team:v3:${espnId || code || canonicalTeamName(name)}`;
-  const cached = cache.get(key);
-  const now = Date.now();
-  if (cached && now - cached.createdAt < 15 * 60 * 1000) {
-    return { ...cached.payload, cache: { hit: true, ttlMs: 15 * 60 * 1000 - (now - cached.createdAt) } };
-  }
-
-  const localSquad = findLocalSquad({ name, code });
-  const localPlayers = (localSquad?.players || []).map(normalizeLocalPlayer);
-
-  let roster = { name: "espn-roster", ok: false, error: espnId ? null : "Đội chưa có ESPN team id" };
-  if (espnId) {
-    roster = await fetchJson(
-      "espn-roster",
-      `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/${encodeURIComponent(espnId)}/roster`
-    );
-  }
-
-  const espnPlayers = roster.ok ? (roster.data.athletes || []).map(normalizeAthlete) : [];
-  const players = localPlayers.length ? mergePlayers(localPlayers, espnPlayers) : espnPlayers;
-
-  const espnTeam = roster.ok ? normalizeRosterTeam(roster.data.team) : {};
-  const espnCoach = roster.ok
-    ? (roster.data.coach || []).map((coach) => `${coach.firstName || ""} ${coach.lastName || ""}`.trim()).filter(Boolean)
-    : [];
-  const localCoach = localSquad?.coach
-    ? [localSquad.coachNationality ? `${localSquad.coach} (${localSquad.coachNationality})` : localSquad.coach]
-    : [];
-
-  const sourceNames = [
-    localPlayers.length ? "squads.json (football-data.org + FIFA)" : null,
-    roster.ok ? "ESPN roster" : null
-  ].filter(Boolean);
-
-  const notes = [];
-  if (localPlayers.length) {
-    notes.push(`Đội hình chính thức 26 cầu thủ từ dữ liệu public (cập nhật ${localSquads.updatedAt || "?"}): số áo, vị trí, CLB, ngày sinh, quốc tịch.`);
-  }
-  if (roster.ok) {
-    notes.push("Ảnh chân dung và hồ sơ cầu thủ bổ sung từ ESPN public endpoint.");
-  }
-  if (!players.length) {
-    notes.push("Chưa có dữ liệu cầu thủ cho đội này từ các nguồn miễn phí.");
-  }
-  notes.push("Giá trị cầu thủ không có trong nguồn miễn phí hợp lệ, app không scrape Transfermarkt.");
-
-  const payload = {
-    generatedAt: new Date().toISOString(),
-    cache: { hit: false, ttlMs: 15 * 60 * 1000 },
-    sources: [
-      { name: "squads-local", ok: localPlayers.length > 0, error: localPlayers.length ? null : "Không tìm thấy đội trong data/squads.json" },
-      { name: roster.name, ok: roster.ok, error: roster.error || null }
-    ],
-    rosterSource: sourceNames.join(" + ") || "Không có nguồn",
-    team: {
-      id: espnId,
-      code: localSquad?.fifaCode || espnTeam.code || code,
-      name: localSquad?.name || espnTeam.name || name,
-      logo: espnTeam.logo || localSquad?.logo || "",
-      fifaRanking: localSquad?.fifaRanking || null,
-      group: localSquad?.group ? `Group ${localSquad.group}` : "",
-      standingSummary: espnTeam.standingSummary || "",
-      recordSummary: espnTeam.recordSummary || ""
-    },
-    coach: localCoach.length ? localCoach : espnCoach,
-    players,
-    notes
-  };
-
-  cache.set(key, { createdAt: now, payload });
-  return payload;
-}
-
 function normalizeRosterTeam(team = {}) {
   return {
     id: team.id || "",
@@ -678,7 +596,7 @@ async function fetchJson(name, url) {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { "user-agent": "LiveCup/1.0 (+local development)" }
+      headers: { "user-agent": "LiveCup/1.0 (+cloudflare pages)" }
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -691,14 +609,7 @@ async function fetchJson(name, url) {
   }
 }
 
-async function buildLivePayload(force = false) {
-  const key = "live";
-  const cached = cache.get(key);
-  const now = Date.now();
-  if (!force && cached && now - cached.createdAt < 10000) {
-    return { ...cached.payload, cache: { hit: true, ttlMs: 10000 - (now - cached.createdAt) } };
-  }
-
+export async function buildLivePayload() {
   const [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball] = await Promise.all([
     fetchJson("espn", SOURCE_URLS.espn),
     fetchJson("worldcup26", SOURCE_URLS.worldcup26Games),
@@ -719,9 +630,9 @@ async function buildLivePayload(force = false) {
     : [];
   const matches = mergeMatches([espnMatches, wcMatches, openMatches]);
 
-  const payload = {
+  return {
     generatedAt: new Date().toISOString(),
-    cache: { hit: false, ttlMs: 10000 },
+    cache: { hit: false, ttlMs: 30000 },
     sources: [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball].map((source) => ({
       name: source.name,
       ok: source.ok,
@@ -733,73 +644,68 @@ async function buildLivePayload(force = false) {
     standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : []),
     schedule: buildSchedule(matches)
   };
-
-  cache.set(key, { createdAt: now, payload });
-  return payload;
 }
 
-async function serveStatic(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
-  const filePath = path.normalize(path.join(root, pathname));
+export async function buildTeamPayload({ espnId = "", code = "", name = "" } = {}) {
+  const localSquad = findLocalSquad({ name, code });
+  const localPlayers = (localSquad?.players || []).map(normalizeLocalPlayer);
 
-  if (!filePath.startsWith(root)) {
-    res.writeHead(403);
-    res.end("Forbidden");
-    return;
+  let roster = { name: "espn-roster", ok: false, error: espnId ? null : "Đội chưa có ESPN team id" };
+  if (espnId) {
+    roster = await fetchJson(
+      "espn-roster",
+      `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/${encodeURIComponent(espnId)}/roster`
+    );
   }
 
-  try {
-    const content = await fs.readFile(filePath);
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
-      "content-type": mimeTypes[ext] || "application/octet-stream",
-      "cache-control": ext === ".html" ? "no-store" : "public, max-age=3600"
-    });
-    res.end(content);
-  } catch {
-    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-    res.end("Not found");
+  const espnPlayers = roster.ok ? (roster.data.athletes || []).map(normalizeAthlete) : [];
+  const players = localPlayers.length ? mergePlayers(localPlayers, espnPlayers) : espnPlayers;
+
+  const espnTeam = roster.ok ? normalizeRosterTeam(roster.data.team) : {};
+  const espnCoach = roster.ok
+    ? (roster.data.coach || []).map((coach) => `${coach.firstName || ""} ${coach.lastName || ""}`.trim()).filter(Boolean)
+    : [];
+  const localCoach = localSquad?.coach
+    ? [localSquad.coachNationality ? `${localSquad.coach} (${localSquad.coachNationality})` : localSquad.coach]
+    : [];
+
+  const sourceNames = [
+    localPlayers.length ? "squads.json (football-data.org + FIFA)" : null,
+    roster.ok ? "ESPN roster" : null
+  ].filter(Boolean);
+
+  const notes = [];
+  if (localPlayers.length) {
+    notes.push(`Đội hình chính thức 26 cầu thủ từ dữ liệu public (cập nhật ${localSquads.updatedAt || "?"}): số áo, vị trí, CLB, ngày sinh, quốc tịch.`);
   }
+  if (roster.ok) {
+    notes.push("Ảnh chân dung và hồ sơ cầu thủ bổ sung từ ESPN public endpoint.");
+  }
+  if (!players.length) {
+    notes.push("Chưa có dữ liệu cầu thủ cho đội này từ các nguồn miễn phí.");
+  }
+  notes.push("Giá trị cầu thủ không có trong nguồn miễn phí hợp lệ, app không scrape Transfermarkt.");
+
+  return {
+    generatedAt: new Date().toISOString(),
+    cache: { hit: false, ttlMs: 15 * 60 * 1000 },
+    sources: [
+      { name: "squads-local", ok: localPlayers.length > 0, error: localPlayers.length ? null : "Không tìm thấy đội trong data/squads.json" },
+      { name: roster.name, ok: roster.ok, error: roster.error || null }
+    ],
+    rosterSource: sourceNames.join(" + ") || "Không có nguồn",
+    team: {
+      id: espnId,
+      code: localSquad?.fifaCode || espnTeam.code || code,
+      name: localSquad?.name || espnTeam.name || name,
+      logo: espnTeam.logo || localSquad?.logo || "",
+      fifaRanking: localSquad?.fifaRanking || null,
+      group: localSquad?.group ? `Group ${localSquad.group}` : "",
+      standingSummary: espnTeam.standingSummary || "",
+      recordSummary: espnTeam.recordSummary || ""
+    },
+    coach: localCoach.length ? localCoach : espnCoach,
+    players,
+    notes
+  };
 }
-
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  if (url.pathname === "/api/live") {
-    try {
-      const payload = await buildLivePayload(url.searchParams.get("refresh") === "1");
-      sendJson(res, 200, payload);
-    } catch (error) {
-      sendJson(res, 500, { error: error.message });
-    }
-    return;
-  }
-
-  if (url.pathname === "/api/team") {
-    try {
-      const payload = await buildTeamPayload({
-        espnId: url.searchParams.get("espnId") || "",
-        code: url.searchParams.get("code") || "",
-        name: url.searchParams.get("name") || ""
-      });
-      sendJson(res, 200, payload);
-    } catch (error) {
-      sendJson(res, 500, { error: error.message });
-    }
-    return;
-  }
-
-  if (url.pathname === "/api/health") {
-    sendJson(res, 200, { ok: true, cacheKeys: [...cache.keys()], now: new Date().toISOString() });
-    return;
-  }
-
-  await serveStatic(req, res);
-});
-
-loadLocalSquads().then(() => {
-  server.listen(port, () => {
-    console.log(`LiveCup server listening on http://localhost:${port}`);
-  });
-});

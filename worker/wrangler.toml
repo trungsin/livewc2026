@@ -1,0 +1,22 @@
+# Worker realtime — deploy riêng với Pages:
+#   npx wrangler deploy --config worker/wrangler.toml
+#
+# Route bên dưới gắn worker vào đường dẫn /ws của domain chính,
+# nhờ vậy frontend chỉ cần kết nối wss://<domain>/ws (không cần config).
+# Đổi pattern/zone_name nếu bạn dùng domain khác.
+
+name = "livewc2026-realtime"
+main = "index.js"
+compatibility_date = "2026-06-01"
+
+routes = [
+  { pattern = "worldcup2026.leesun.space/ws", zone_name = "leesun.space" }
+]
+
+[[durable_objects.bindings]]
+name = "LIVE_HUB"
+class_name = "LiveHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveHub"]
