@@ -1,0 +1,631 @@
+const http = require("node:http");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+
+const root = __dirname;
+const port = Number(process.env.PORT || 4174);
+const cache = new Map();
+
+const SOURCE_URLS = {
+  espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
+  espnTeams: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams",
+  worldcup26Games: "https://worldcup26.ir/get/games",
+  worldcup26Groups: "https://worldcup26.ir/get/groups",
+  worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
+  worldcup26Teams: "https://worldcup26.ir/get/teams",
+  openfootball: "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json"
+};
+
+const mimeTypes = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp"
+};
+
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  res.end(body);
+}
+
+function normalizeStatus(status) {
+  const state = status?.type?.state;
+  const name = status?.type?.name || "";
+  const completed = Boolean(status?.type?.completed);
+
+  if (completed || state === "post") {
+    return "finished";
+  }
+
+  if (state === "in") {
+    return name.includes("HALFTIME") ? "halftime" : "live";
+  }
+
+  return "upcoming";
+}
+
+function teamCode(team) {
+  return team?.abbreviation || team?.shortDisplayName?.slice(0, 3)?.toUpperCase() || "";
+}
+
+function normalizeEspnEvent(event) {
+  const competition = event.competitions?.[0] || {};
+  const competitors = competition.competitors || [];
+  const home = competitors.find((item) => item.homeAway === "home") || competitors[0] || {};
+  const away = competitors.find((item) => item.homeAway === "away") || competitors[1] || {};
+  const status = normalizeStatus(event.status || competition.status);
+  const kickoffUtc = event.date || competition.date || competition.startDate;
+
+  return {
+    id: `espn-${event.id}`,
+    home: home.team?.displayName || home.team?.name || "TBD",
+    away: away.team?.displayName || away.team?.name || "TBD",
+    homeCode: teamCode(home.team),
+    awayCode: teamCode(away.team),
+    homeLogo: teamLogo(home.team),
+    awayLogo: teamLogo(away.team),
+    homeTeamId: home.team?.id || "",
+    awayTeamId: away.team?.id || "",
+    homeScore: Number(home.score || 0),
+    awayScore: Number(away.score || 0),
+    minute: Math.round(event.status?.clock || competition.status?.clock || 0),
+    status,
+    stadium: competition.venue?.fullName || event.venue?.displayName || "",
+    group: event.season?.slug === "group-stage" ? "Group stage" : "World Cup",
+    kickoff: kickoffUtc ? formatTime(kickoffUtc) : "",
+    kickoffUtc,
+    sources: ["espn"],
+    confidence: 0.86,
+    rawIds: { espn: event.id },
+    details: competition.details || []
+  };
+}
+
+function teamLogo(team) {
+  if (!team) {
+    return "";
+  }
+
+  if (team.logo) {
+    return team.logo;
+  }
+
+  const logos = team.logos || [];
+  return logos.find((logo) => logo.rel?.includes("default"))?.href || logos[0]?.href || "";
+}
+
+function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new Map()) {
+  const home = game.home_team_name_en || game.home_team_label || `Team ${game.home_team_id || ""}`.trim();
+  const away = game.away_team_name_en || game.away_team_label || `Team ${game.away_team_id || ""}`.trim();
+  const stadium = stadiumsById.get(String(game.stadium_id));
+  const homeTeam = teamsById.get(String(game.home_team_id));
+  const awayTeam = teamsById.get(String(game.away_team_id));
+  const finished = String(game.finished).toLowerCase() === "true";
+  const timeElapsed = String(game.time_elapsed || "").toLowerCase();
+  const status = finished ? "finished" : (timeElapsed !== "notstarted" && timeElapsed !== "" ? "live" : "upcoming");
+
+  return {
+    id: `wc26-${game.id}`,
+    home,
+    away,
+    homeCode: homeTeam?.fifa_code || codeFromName(home),
+    awayCode: awayTeam?.fifa_code || codeFromName(away),
+    homeLogo: homeTeam?.flag || "",
+    awayLogo: awayTeam?.flag || "",
+    homeTeamId: "",
+    awayTeamId: "",
+    homeWorldcup26Id: game.home_team_id || "",
+    awayWorldcup26Id: game.away_team_id || "",
+    homeScore: Number(game.home_score || 0),
+    awayScore: Number(game.away_score || 0),
+    minute: Number.parseInt(timeElapsed, 10) || 0,
+    status,
+    stadium: formatStadium(stadium) || game.stadium_name_en || game.stadium || "",
+    group: game.group ? `Group ${game.group}` : "World Cup",
+    kickoff: game.local_date || "",
+    kickoffUtc: parseWorldcup26Date(game.local_date),
+    sources: ["worldcup26"],
+    confidence: 0.68,
+    rawIds: { worldcup26: game.id }
+  };
+}
+
+function formatStadium(stadium) {
+  if (!stadium) {
+    return "";
+  }
+
+  const name = stadium.fifa_name || stadium.name_en;
+  const city = stadium.city_en;
+  return [name, city].filter(Boolean).join(", ");
+}
+
+function normalizeOpenfootballMatch(match, index) {
+  return {
+    id: `openfootball-${index}`,
+    home: match.team1 || "TBD",
+    away: match.team2 || "TBD",
+    homeCode: codeFromName(match.team1),
+    awayCode: codeFromName(match.team2),
+    homeScore: Number(match.score?.ft?.[0] || 0),
+    awayScore: Number(match.score?.ft?.[1] || 0),
+    minute: 0,
+    status: match.score ? "finished" : "upcoming",
+    stadium: match.ground || "",
+    group: match.group || match.round || "World Cup",
+    kickoff: [match.date, match.time].filter(Boolean).join(" "),
+    kickoffUtc: match.date || "",
+    sources: ["openfootball"],
+    confidence: 0.58,
+    rawIds: { openfootball: index }
+  };
+}
+
+function codeFromName(name = "") {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function formatTime(isoValue) {
+  try {
+    return new Intl.DateTimeFormat("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Ho_Chi_Minh"
+    }).format(new Date(isoValue));
+  } catch {
+    return "";
+  }
+}
+
+function parseWorldcup26Date(value) {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
+}
+
+function matchKey(match) {
+  const teams = [match.home, match.away]
+    .map((name) => canonicalTeamName(name))
+    .sort()
+    .join("-");
+  return teams;
+}
+
+function canonicalTeamName(name) {
+  const compact = String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const aliases = {
+    czechia: "czechrepublic",
+    bosniaherzegovina: "bosniaandherzegovina",
+    usa: "unitedstates",
+    usmnt: "unitedstates",
+    korea: "southkorea",
+    republicofkorea: "southkorea"
+  };
+  return aliases[compact] || compact;
+}
+
+function mergeMatches(sourceLists) {
+  const byKey = new Map();
+
+  for (const sourceList of sourceLists) {
+    for (const match of sourceList) {
+      const key = matchKey(match);
+      const existing = byKey.get(key);
+
+      if (!existing) {
+        byKey.set(key, match);
+        continue;
+      }
+
+      existing.sources = Array.from(new Set([...(existing.sources || []), ...(match.sources || [])]));
+      existing.confidence = Math.min(0.98, Math.max(existing.confidence || 0, match.confidence || 0) + 0.08);
+      existing.rawIds = { ...(existing.rawIds || {}), ...(match.rawIds || {}) };
+      existing.homeLogo = existing.homeLogo || match.homeLogo || "";
+      existing.awayLogo = existing.awayLogo || match.awayLogo || "";
+      existing.homeTeamId = existing.homeTeamId || match.homeTeamId || "";
+      existing.awayTeamId = existing.awayTeamId || match.awayTeamId || "";
+      existing.homeWorldcup26Id = existing.homeWorldcup26Id || match.homeWorldcup26Id || "";
+      existing.awayWorldcup26Id = existing.awayWorldcup26Id || match.awayWorldcup26Id || "";
+
+      if (existing.status === "upcoming" && match.status !== "upcoming") {
+        Object.assign(existing, {
+          homeScore: match.homeScore,
+          awayScore: match.awayScore,
+          minute: match.minute,
+          status: match.status
+        });
+      }
+
+      if (!existing.stadium && match.stadium) {
+        existing.stadium = match.stadium;
+      }
+      if (!existing.group && match.group) {
+        existing.group = match.group;
+      }
+    }
+  }
+
+  return [...byKey.values()].sort((a, b) => {
+    const dateA = Date.parse(a.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
+    const dateB = Date.parse(b.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
+    return dateA - dateB;
+  });
+}
+
+function buildTeams(matches, worldcupTeams = []) {
+  const teamsByKey = new Map();
+  const worldcupByName = new Map(
+    worldcupTeams.map((team) => [canonicalTeamName(team.name_en), team])
+  );
+
+  for (const match of matches) {
+    addTeamFromMatch(teamsByKey, worldcupByName, {
+      name: match.home,
+      code: match.homeCode,
+      logo: match.homeLogo,
+      espnId: match.homeTeamId,
+      worldcup26Id: match.homeWorldcup26Id,
+      group: match.group,
+      source: match.sources
+    });
+    addTeamFromMatch(teamsByKey, worldcupByName, {
+      name: match.away,
+      code: match.awayCode,
+      logo: match.awayLogo,
+      espnId: match.awayTeamId,
+      worldcup26Id: match.awayWorldcup26Id,
+      group: match.group,
+      source: match.sources
+    });
+  }
+
+  return [...teamsByKey.values()]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((team) => ({
+      ...team,
+      sources: [...team.sources]
+    }));
+}
+
+function addTeamFromMatch(teamsByKey, worldcupByName, input) {
+  const key = canonicalTeamName(input.name);
+  if (isPlaceholderTeam(input.name, input.worldcup26Id)) {
+    return;
+  }
+  const wcTeam = worldcupByName.get(key);
+  const existing = teamsByKey.get(key) || {
+    id: key,
+    name: input.name,
+    code: input.code || wcTeam?.fifa_code || "",
+    logo: input.logo || wcTeam?.flag || "",
+    flag: wcTeam?.flag || input.logo || "",
+    group: wcTeam?.groups ? `Group ${wcTeam.groups}` : input.group || "World Cup",
+    espnId: input.espnId || "",
+    worldcup26Id: input.worldcup26Id || wcTeam?.id || "",
+    iso2: wcTeam?.iso2 || "",
+    sources: new Set()
+  };
+
+  existing.logo = existing.logo || input.logo || wcTeam?.flag || "";
+  existing.flag = existing.flag || wcTeam?.flag || input.logo || "";
+  existing.code = existing.code || input.code || wcTeam?.fifa_code || "";
+  existing.espnId = existing.espnId || input.espnId || "";
+  existing.worldcup26Id = existing.worldcup26Id || input.worldcup26Id || wcTeam?.id || "";
+  for (const source of input.source || []) {
+    existing.sources.add(source);
+  }
+
+  teamsByKey.set(key, existing);
+}
+
+function isPlaceholderTeam(name, worldcup26Id) {
+  const normalized = String(name || "").toLowerCase();
+  return worldcup26Id === "0"
+    || normalized.includes("group")
+    || normalized === "tbd"
+    || normalized.startsWith("winner ")
+    || /^w\d+$/.test(normalized);
+}
+
+function normalizeAthlete(athlete) {
+  return {
+    id: athlete.id,
+    name: athlete.displayName || athlete.fullName || "Chưa rõ tên",
+    shortName: athlete.shortName || "",
+    headshot: athlete.headshot?.href || "",
+    jersey: athlete.jersey || "",
+    position: athlete.position?.displayName || athlete.position?.name || "",
+    age: athlete.age || "",
+    dateOfBirth: athlete.dateOfBirth || "",
+    height: athlete.displayHeight || "",
+    weight: athlete.displayWeight || "",
+    citizenship: athlete.citizenship || athlete.flag?.alt || "",
+    originNationality: athlete.birthPlace?.country || athlete.citizenship || athlete.flag?.alt || "",
+    currentClub: athlete.clubhouse || "",
+    marketValue: null,
+    marketValueNote: "Chưa có nguồn miễn phí hợp lệ",
+    profileUrl: athlete.links?.find((link) => link.rel?.includes("playercard"))?.href || "",
+    source: "espn"
+  };
+}
+
+async function buildTeamPayload(teamId, fallbackCode = "") {
+  const key = `team:v2:${teamId || fallbackCode}`;
+  const cached = cache.get(key);
+  const now = Date.now();
+  if (cached && now - cached.createdAt < 15 * 60 * 1000) {
+    return { ...cached.payload, cache: { hit: true, ttlMs: 15 * 60 * 1000 - (now - cached.createdAt) } };
+  }
+
+  if (!teamId) {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      cache: { hit: false, ttlMs: 0 },
+      team: { code: fallbackCode },
+      players: [],
+      notes: ["Đội này chưa có ESPN team id trong nguồn live, nên chưa tải được roster miễn phí."]
+    };
+    cache.set(key, { createdAt: now, payload });
+    return payload;
+  }
+
+  const roster = await fetchJson(
+    "espn-roster",
+    `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/${encodeURIComponent(teamId)}/roster`
+  );
+
+  const athletes = roster.ok ? (roster.data.athletes || []) : [];
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    cache: { hit: false, ttlMs: 15 * 60 * 1000 },
+    sources: [{ name: roster.name, ok: roster.ok, error: roster.error || null }],
+    team: roster.ok ? normalizeRosterTeam(roster.data.team) : { id: teamId, code: fallbackCode },
+    coach: roster.ok ? (roster.data.coach || []).map((coach) => `${coach.firstName || ""} ${coach.lastName || ""}`.trim()).filter(Boolean) : [],
+    players: athletes.map(normalizeAthlete),
+    notes: [
+      "Roster lấy từ ESPN public endpoint.",
+      "Giá trị cầu thủ không có trong nguồn miễn phí hợp lệ, app không scrape Transfermarkt."
+    ]
+  };
+
+  cache.set(key, { createdAt: now, payload });
+  return payload;
+}
+
+function normalizeRosterTeam(team = {}) {
+  return {
+    id: team.id || "",
+    name: team.displayName || team.name || "",
+    code: team.abbreviation || "",
+    logo: team.logo || "",
+    color: team.color || "",
+    standingSummary: team.standingSummary || "",
+    recordSummary: team.recordSummary || "",
+    clubhouse: team.clubhouse || ""
+  };
+}
+
+function buildEvents(matches) {
+  const sourceEvents = [];
+  for (const match of matches) {
+    for (const detail of match.details || []) {
+      sourceEvents.push({
+        minute: detail.clock?.displayValue || detail.displayTime || `${match.minute || "--"}'`,
+        title: detail.type?.text || detail.type?.displayName || `${match.home} vs ${match.away}`,
+        copy: detail.text || detail.team?.displayName || "Sự kiện từ nguồn live.",
+        source: "espn"
+      });
+    }
+  }
+
+  if (sourceEvents.length) {
+    return sourceEvents.reverse();
+  }
+
+  return matches
+    .filter((match) => match.status === "live" || match.status === "finished")
+    .slice(0, 8)
+    .map((match) => ({
+      minute: match.status === "finished" ? "FT" : `${match.minute || "--"}'`,
+      title: `${match.home} ${match.homeScore} - ${match.awayScore} ${match.away}`,
+      copy: `Nguồn: ${(match.sources || []).join(" + ")}. Độ tin cậy ${Math.round((match.confidence || 0) * 100)}%.`
+    }));
+}
+
+function buildSchedule(matches) {
+  return matches
+    .filter((match) => match.status === "upcoming")
+    .slice(0, 6)
+    .map((match) => ({
+      time: formatTime(match.kickoffUtc) || match.kickoff || "--",
+      title: `${match.home} vs ${match.away}`,
+      stadium: match.stadium || "Chưa rõ sân"
+    }));
+}
+
+function buildStandings(matches, groupsFromApi) {
+  if (Array.isArray(groupsFromApi) && groupsFromApi.length) {
+    const rows = [];
+    for (const group of groupsFromApi) {
+      for (const team of group.teams || []) {
+        rows.push({
+          team: team.team_name_en || team.name_en || team.team_id || "TBD",
+          played: Number(team.mp || team.played || 0),
+          diff: Number(team.gd || (Number(team.gf || 0) - Number(team.ga || 0))),
+          points: Number(team.pts || team.points || 0)
+        });
+      }
+    }
+    if (rows.length) {
+      return rows.slice(0, 12);
+    }
+  }
+
+  const table = new Map();
+  const completed = matches.filter((match) => match.status === "finished");
+  for (const match of completed) {
+    ensureTeam(table, match.home);
+    ensureTeam(table, match.away);
+    applyResult(table.get(match.home), match.homeScore, match.awayScore);
+    applyResult(table.get(match.away), match.awayScore, match.homeScore);
+  }
+
+  return [...table.values()]
+    .sort((a, b) => b.points - a.points || b.diff - a.diff)
+    .slice(0, 12);
+}
+
+function ensureTeam(table, team) {
+  if (!table.has(team)) {
+    table.set(team, { team, played: 0, diff: 0, points: 0 });
+  }
+}
+
+function applyResult(row, goalsFor, goalsAgainst) {
+  row.played += 1;
+  row.diff += goalsFor - goalsAgainst;
+  row.points += goalsFor > goalsAgainst ? 3 : goalsFor === goalsAgainst ? 1 : 0;
+}
+
+async function fetchJson(name, url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "user-agent": "LiveCup/1.0 (+local development)" }
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return { name, ok: true, data: await response.json() };
+  } catch (error) {
+    return { name, ok: false, error: error.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function buildLivePayload(force = false) {
+  const key = "live";
+  const cached = cache.get(key);
+  const now = Date.now();
+  if (!force && cached && now - cached.createdAt < 30000) {
+    return { ...cached.payload, cache: { hit: true, ttlMs: 30000 - (now - cached.createdAt) } };
+  }
+
+  const [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball] = await Promise.all([
+    fetchJson("espn", SOURCE_URLS.espn),
+    fetchJson("worldcup26", SOURCE_URLS.worldcup26Games),
+    fetchJson("worldcup26-groups", SOURCE_URLS.worldcup26Groups),
+    fetchJson("worldcup26-stadiums", SOURCE_URLS.worldcup26Stadiums),
+    fetchJson("worldcup26-teams", SOURCE_URLS.worldcup26Teams),
+    fetchJson("openfootball", SOURCE_URLS.openfootball)
+  ]);
+
+  const stadiumList = wcStadiums.ok ? (wcStadiums.data.stadiums || wcStadiums.data || []) : [];
+  const teamList = wcTeams.ok ? (wcTeams.data.teams || wcTeams.data || []) : [];
+  const stadiumsById = new Map(stadiumList.map((stadium) => [String(stadium.id), stadium]));
+  const teamsById = new Map(teamList.map((team) => [String(team.id), team]));
+  const espnMatches = espn.ok ? (espn.data.events || []).map(normalizeEspnEvent) : [];
+  const wcMatches = wcGames.ok ? (wcGames.data.games || wcGames.data || []).map((game) => normalizeWorldcup26Game(game, stadiumsById, teamsById)) : [];
+  const openMatches = openfootball.ok && !espnMatches.length && !wcMatches.length
+    ? (openfootball.data.matches || []).map(normalizeOpenfootballMatch)
+    : [];
+  const matches = mergeMatches([espnMatches, wcMatches, openMatches]);
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    cache: { hit: false, ttlMs: 30000 },
+    sources: [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball].map((source) => ({
+      name: source.name,
+      ok: source.ok,
+      error: source.error || null
+    })),
+    matches,
+    teams: buildTeams(matches, teamList),
+    events: buildEvents(matches),
+    standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : []),
+    schedule: buildSchedule(matches)
+  };
+
+  cache.set(key, { createdAt: now, payload });
+  return payload;
+}
+
+async function serveStatic(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  const filePath = path.normalize(path.join(root, pathname));
+
+  if (!filePath.startsWith(root)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+
+  try {
+    const content = await fs.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      "content-type": mimeTypes[ext] || "application/octet-stream",
+      "cache-control": ext === ".html" ? "no-store" : "public, max-age=3600"
+    });
+    res.end(content);
+  } catch {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (url.pathname === "/api/live") {
+    try {
+      const payload = await buildLivePayload(url.searchParams.get("refresh") === "1");
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/team") {
+    try {
+      const payload = await buildTeamPayload(url.searchParams.get("espnId") || "", url.searchParams.get("code") || "");
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/health") {
+    sendJson(res, 200, { ok: true, cacheKeys: [...cache.keys()], now: new Date().toISOString() });
+    return;
+  }
+
+  await serveStatic(req, res);
+});
+
+server.listen(port, () => {
+  console.log(`LiveCup server listening on http://localhost:${port}`);
+});

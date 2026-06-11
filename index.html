@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LiveCup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Điều hướng">
+        <a class="brand" href="#" aria-label="LiveCup">
+          <span class="brand-mark">LC</span>
+          <span>LiveCup</span>
+        </a>
+        <nav class="nav-list">
+          <a class="nav-item active" href="#live">Live</a>
+          <a class="nav-item" href="#events">Diễn biến</a>
+          <a class="nav-item" href="#teams">Đội tuyển</a>
+          <a class="nav-item" href="#standings">Bảng đấu</a>
+          <a class="nav-item" href="#schedule">Lịch đấu</a>
+        </nav>
+        <div class="source-box">
+          <span class="source-label">Nguồn dữ liệu</span>
+          <strong id="source-summary">Đang tải</strong>
+          <p id="source-detail">ESPN hidden API, worldcup26.ir và openfootball được gom qua proxy miễn phí.</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="hero" id="live">
+          <div class="hero-content">
+            <div class="eyebrow">
+              <span class="live-dot" aria-hidden="true"></span>
+              Đang theo dõi
+            </div>
+            <h1>Kết quả và diễn biến World Cup từ các nguồn miễn phí.</h1>
+            <p>LiveCup gom dữ liệu từ ESPN, community API và open data, có cache và fallback khi một nguồn bị lỗi.</p>
+          </div>
+          <div class="hero-panel" aria-label="Tổng quan live">
+            <div>
+              <span class="metric-label">Trận live</span>
+              <strong id="live-count">0</strong>
+            </div>
+            <div>
+              <span class="metric-label">Sự kiện mới</span>
+              <strong id="event-count">0</strong>
+            </div>
+            <div>
+              <span class="metric-label">Cập nhật</span>
+              <strong id="last-sync">--:--</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="toolbar" aria-label="Bộ lọc">
+          <div class="tabs" role="tablist" aria-label="Lọc giải đấu">
+            <button class="tab active" type="button" data-filter="all">Tất cả</button>
+            <button class="tab" type="button" data-filter="live">Đang đấu</button>
+            <button class="tab" type="button" data-filter="finished">Đã xong</button>
+            <button class="tab" type="button" data-filter="upcoming">Sắp đấu</button>
+          </div>
+          <label class="search">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="search-input" type="search" placeholder="Tìm đội bóng hoặc sân đấu" autocomplete="off">
+          </label>
+        </section>
+
+        <section class="content-grid">
+          <section class="panel matches-panel" aria-labelledby="matches-title">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Match center</span>
+                <h2 id="matches-title">Trận đấu</h2>
+              </div>
+              <button class="icon-button" id="refresh-button" type="button" aria-label="Làm mới">
+                <span class="refresh-icon" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="match-list" id="match-list"></div>
+          </section>
+
+          <section class="panel timeline-panel" id="events" aria-labelledby="timeline-title">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Timeline</span>
+                <h2 id="timeline-title">Diễn biến nổi bật</h2>
+              </div>
+              <span class="pill" id="timeline-status">Theo dõi</span>
+            </div>
+            <ol class="timeline" id="timeline-list"></ol>
+          </section>
+        </section>
+
+        <section class="panel teams-panel" id="teams" aria-labelledby="teams-title">
+          <div class="panel-header">
+            <div>
+              <span class="section-kicker">Squads</span>
+              <h2 id="teams-title">Đội tuyển và cầu thủ</h2>
+            </div>
+            <span class="pill" id="team-count">0 đội</span>
+          </div>
+          <div class="team-browser">
+            <div class="team-grid" id="team-grid"></div>
+            <aside class="team-detail" id="team-detail" aria-live="polite">
+              <div class="empty-state">Chọn một đội để xem danh sách cầu thủ, HLV và thông tin cầu thủ từ nguồn miễn phí.</div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="lower-grid">
+          <section class="panel standings-panel" id="standings" aria-labelledby="standings-title">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">World Cup</span>
+                <h2 id="standings-title">Bảng xếp hạng</h2>
+              </div>
+            </div>
+            <table class="standings">
+              <thead>
+                <tr>
+                  <th>Đội</th>
+                  <th>Trận</th>
+                  <th>HS</th>
+                  <th>Điểm</th>
+                </tr>
+              </thead>
+              <tbody id="standings-body"></tbody>
+            </table>
+          </section>
+
+          <section class="panel schedule-panel" id="schedule" aria-labelledby="schedule-title">
+            <div class="panel-header">
+              <div>
+                <span class="section-kicker">Next</span>
+                <h2 id="schedule-title">Lịch sắp tới</h2>
+              </div>
+            </div>
+            <div class="schedule-list" id="schedule-list"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
