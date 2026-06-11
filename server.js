@@ -631,12 +631,35 @@ function buildEvents(matches) {
     }));
 }
 
+function formatScheduleTime(isoValue) {
+  if (!isoValue) {
+    return "";
+  }
+  try {
+    return new Intl.DateTimeFormat("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+      timeZone: "Asia/Ho_Chi_Minh"
+    }).format(new Date(isoValue));
+  } catch {
+    return "";
+  }
+}
+
 function buildSchedule(matches) {
   return matches
     .filter((match) => match.status === "upcoming")
-    .slice(0, 6)
+    .sort((a, b) => {
+      const dateA = Date.parse(a.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
+      const dateB = Date.parse(b.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
+      return dateA - dateB;
+    })
+    .slice(0, 8)
     .map((match) => ({
-      time: formatTime(match.kickoffUtc) || match.kickoff || "--",
+      time: formatScheduleTime(match.kickoffUtc) || match.kickoff || "--",
+      kickoffUtc: match.kickoffUtc || "",
       title: `${match.home} vs ${match.away}`,
       stadium: match.stadium || "Chưa rõ sân"
     }));

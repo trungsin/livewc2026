@@ -2,9 +2,7 @@ let matches = [];
 let timeline = [];
 let standings = [];
 let schedule = [];
-let teams = [];
 let activeFilter = "all";
-let selectedTeamId = "";
 let lastPayload = null;
 let realtimeSocket = null;
 let realtimeConnected = false;
@@ -16,7 +14,6 @@ const fallbackPayload = {
   cache: { hit: false, ttlMs: 0 },
   sources: [{ name: "fallback", ok: true, label: "Dữ liệu dự phòng cục bộ" }],
   matches: [],
-  teams: [],
   events: [],
   standings: [],
   schedule: []
@@ -26,9 +23,8 @@ const matchList = document.querySelector("#match-list");
 const timelineList = document.querySelector("#timeline-list");
 const standingsBody = document.querySelector("#standings-body");
 const scheduleList = document.querySelector("#schedule-list");
-const teamGrid = document.querySelector("#team-grid");
-const teamDetail = document.querySelector("#team-detail");
-const teamCount = document.querySelector("#team-count");
+const resultsList = document.querySelector("#results-list");
+const resultsCount = document.querySelector("#results-count");
 const searchInput = document.querySelector("#search-input");
 const tabs = document.querySelectorAll(".tab");
 const sourceSummary = document.querySelector("#source-summary");
@@ -41,36 +37,6 @@ function formatClock(value = new Date()) {
     minute: "2-digit",
     second: "2-digit"
   }).format(new Date(value));
-}
-
-function formatKickoff(isoValue) {
-  if (!isoValue) {
-    return "";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    day: "2-digit",
-    month: "2-digit"
-  }).format(new Date(isoValue));
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function imageTag(src, alt, className) {
-  if (!src) {
-    return `<span class="${className} placeholder">${escapeHtml((alt || "?").slice(0, 3).toUpperCase())}</span>`;
-  }
-
-  return `<img class="${className}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy">`;
 }
 
 function matchStatus(match) {
@@ -179,10 +145,47 @@ function renderStandings() {
   `).join("");
 }
 
+function kickoffTimestamp(match) {
+  const parsed = Date.parse(match.kickoffUtc || "");
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
+function renderResults() {
+  const finished = matches
+    .filter((match) => match.status === "finished")
+    .sort((a, b) => kickoffTimestamp(b) - kickoffTimestamp(a));
+
+  resultsCount.textContent = `${finished.length} trận`;
+
+  if (!finished.length) {
+    resultsList.innerHTML = `<div class="empty-state">Chưa có trận nào kết thúc. Kết quả sẽ hiện tại đây ngay khi trọng tài nổi còi mãn cuộc.</div>`;
+    return;
+  }
+
+  resultsList.innerHTML = finished.map((match) => `
+    <article class="result-card">
+      <div class="result-teams">
+        <span class="result-team">
+          ${imageTag(match.homeLogo, match.home, "team-logo")}
+          <span class="team-name">${escapeHtml(match.home)}</span>
+        </span>
+        <span class="result-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span>
+        <span class="result-team away">
+          <span class="team-name">${escapeHtml(match.away)}</span>
+          ${imageTag(match.awayLogo, match.away, "team-logo")}
+        </span>
+      </div>
+      <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
+      <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
+    </article>
+  `).join("");
+}
+
 function renderSchedule() {
   const items = schedule.length ? schedule : matches
     .filter((match) => match.status === "upcoming")
-    .slice(0, 6)
+    .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b))
+    .slice(0, 8)
     .map((match) => ({
       time: formatKickoff(match.kickoffUtc) || match.kickoff || "--",
       title: `${match.home} vs ${match.away}`,
@@ -205,123 +208,6 @@ function renderSchedule() {
   `).join("");
 }
 
-function renderTeams() {
-  teamCount.textContent = `${teams.length} đội`;
-
-  if (!teams.length) {
-    teamGrid.innerHTML = `<div class="empty-state">Chưa tải được danh sách đội tuyển.</div>`;
-    return;
-  }
-
-  teamGrid.innerHTML = teams.map((team) => `
-    <button class="team-card ${selectedTeamId === team.id ? "active" : ""}" type="button" data-team-id="${escapeHtml(team.id)}">
-      ${imageTag(team.logo || team.flag, team.name, "team-card-logo")}
-      <span>
-        <strong>${escapeHtml(team.name)}</strong>
-        <small>${escapeHtml(team.code || "N/A")} / ${escapeHtml(team.group || "World Cup")}</small>
-      </span>
-    </button>
-  `).join("");
-
-  teamGrid.querySelectorAll(".team-card").forEach((button) => {
-    button.addEventListener("click", () => {
-      const team = teams.find((item) => item.id === button.dataset.teamId);
-      if (team) {
-        loadTeamDetail(team);
-      }
-    });
-  });
-}
-
-async function loadTeamDetail(team) {
-  selectedTeamId = team.id;
-  renderTeams();
-  teamDetail.innerHTML = `<div class="empty-state">Đang tải danh sách cầu thủ ${escapeHtml(team.name)}...</div>`;
-
-  try {
-    const params = new URLSearchParams();
-    if (team.espnId) {
-      params.set("espnId", team.espnId);
-    }
-    if (team.code) {
-      params.set("code", team.code);
-    }
-    if (team.name) {
-      params.set("name", team.name);
-    }
-    const response = await fetch(`/api/team?${params.toString()}`, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const payload = await response.json();
-    renderTeamDetail(team, payload);
-  } catch (error) {
-    teamDetail.innerHTML = `<div class="empty-state">Không tải được roster: ${escapeHtml(error.message)}</div>`;
-  }
-}
-
-function renderTeamDetail(team, payload) {
-  const detailTeam = payload.team || {};
-  const players = payload.players || [];
-  const logo = detailTeam.logo || team.logo || team.flag;
-  const ranking = detailTeam.fifaRanking || team.fifaRanking;
-
-  teamDetail.innerHTML = `
-    <div class="team-detail-header">
-      ${imageTag(logo, team.name, "team-detail-logo")}
-      <div>
-        <h3>${escapeHtml(detailTeam.name || team.name)}</h3>
-        <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(detailTeam.group || team.group || "World Cup")}${ranking ? ` / FIFA #${escapeHtml(ranking)}` : ""}</p>
-        <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Đội hình chính thức từ dữ liệu public, ảnh cầu thủ từ ESPN.")}</p>
-      </div>
-    </div>
-    <div class="info-strip">
-      <span>HLV: ${escapeHtml((payload.coach || []).join(", ") || "Chưa có dữ liệu")}</span>
-      <span>Nguồn: ${escapeHtml(payload.rosterSource || "ESPN roster")}</span>
-      <span>${escapeHtml(players.length ? `${players.length} cầu thủ` : "Chưa có roster")}</span>
-    </div>
-    ${players.length ? renderPlayers(players) : `<div class="empty-state">Chưa có roster miễn phí cho đội này.</div>`}
-  `;
-}
-
-const positionLabels = {
-  Goalkeeper: "Thủ môn",
-  Defender: "Hậu vệ",
-  Midfielder: "Tiền vệ",
-  Forward: "Tiền đạo"
-};
-
-function positionLabel(position) {
-  return positionLabels[position] || position || "Chưa rõ vị trí";
-}
-
-function renderPlayers(players) {
-  return `
-    <div class="player-list">
-      ${players.map((player) => `
-        <article class="player-card">
-          ${imageTag(player.headshot, player.name, "player-photo")}
-          <div>
-            <div class="player-title">
-              <strong>${escapeHtml(player.name)}</strong>
-              <span>${escapeHtml(player.jersey ? `#${player.jersey}` : "")}</span>
-            </div>
-            <div class="player-meta">
-              <span>${escapeHtml(positionLabel(player.position))}</span>
-              <span>${escapeHtml(player.age ? `${player.age} tuổi` : "Chưa rõ tuổi")}</span>
-              <span>${escapeHtml(player.citizenship || "Chưa rõ quốc tịch")}</span>
-            </div>
-            <div class="player-meta">
-              <span>CLB: ${escapeHtml(player.currentClub || "Chưa rõ CLB")}</span>
-              <span>Giá trị: ${escapeHtml(player.marketValue || player.marketValueNote)}</span>
-            </div>
-          </div>
-        </article>
-      `).join("")}
-    </div>
-  `;
-}
-
 function updateMetrics() {
   document.querySelector("#live-count").textContent = matches.filter((match) => match.status === "live").length;
   document.querySelector("#event-count").textContent = realtimeEvents.length + timeline.length;
@@ -340,7 +226,7 @@ function updateMetrics() {
 function renderAll() {
   renderMatches();
   renderTimeline();
-  renderTeams();
+  renderResults();
   renderStandings();
   renderSchedule();
   updateMetrics();
@@ -368,7 +254,6 @@ function applyPayload(payload) {
   timeline = Array.isArray(payload.events) ? payload.events : [];
   standings = Array.isArray(payload.standings) ? payload.standings : [];
   schedule = Array.isArray(payload.schedule) ? payload.schedule : [];
-  teams = Array.isArray(payload.teams) ? payload.teams : [];
   renderAll();
 }
 

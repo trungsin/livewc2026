@@ -569,6 +569,56 @@ input {
   margin-top: 22px;
 }
 
+/* Trang đội tuyển riêng không nằm dưới content-grid nên bỏ margin chồng */
+.teams-page-panel {
+  margin-top: 0;
+}
+
+.results-panel {
+  margin-top: 22px;
+}
+
+.results-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 0 18px 18px;
+}
+
+.result-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.result-teams {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.result-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.result-team.away {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.result-score {
+  font-size: 18px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .team-browser {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);

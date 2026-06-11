@@ -19,9 +19,10 @@
         <nav class="nav-list">
           <a class="nav-item active" href="#live">Live</a>
           <a class="nav-item" href="#events">Diễn biến</a>
-          <a class="nav-item" href="#teams">Đội tuyển</a>
+          <a class="nav-item" href="#results">Kết quả</a>
           <a class="nav-item" href="#standings">Bảng đấu</a>
           <a class="nav-item" href="#schedule">Lịch đấu</a>
+          <a class="nav-item" href="./teams.html">Đội tuyển</a>
         </nav>
         <div class="source-box">
           <span class="source-label">Nguồn dữ liệu</span>
@@ -95,20 +96,15 @@
           </section>
         </section>
 
-        <section class="panel teams-panel" id="teams" aria-labelledby="teams-title">
+        <section class="panel results-panel" id="results" aria-labelledby="results-title">
           <div class="panel-header">
             <div>
-              <span class="section-kicker">Squads</span>
-              <h2 id="teams-title">Đội tuyển và cầu thủ</h2>
+              <span class="section-kicker">Full time</span>
+              <h2 id="results-title">Kết quả trận đấu</h2>
             </div>
-            <span class="pill" id="team-count">0 đội</span>
+            <span class="pill" id="results-count">0 trận</span>
           </div>
-          <div class="team-browser">
-            <div class="team-grid" id="team-grid"></div>
-            <aside class="team-detail" id="team-detail" aria-live="polite">
-              <div class="empty-state">Chọn một đội để xem danh sách cầu thủ, HLV và thông tin cầu thủ từ nguồn miễn phí.</div>
-            </aside>
-          </div>
+          <div class="results-list" id="results-list"></div>
         </section>
 
         <section class="lower-grid">
@@ -145,6 +141,7 @@
       </main>
     </div>
 
+    <script src="./ui-render-helpers.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
