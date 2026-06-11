@@ -1,8 +1,11 @@
-// Worker realtime cho LiveCup: Durable Object poll các nguồn public mỗi 10s
-// trong lúc có client kết nối, diff tỉ số/trạng thái và push qua WebSocket.
-// Deploy: npx wrangler deploy --config worker/wrangler.toml
+// Worker chính của LiveCup: serve static assets (qua [assets] trong wrangler.toml),
+// API /api/live + /api/team, và realtime /ws bằng Durable Object — DO poll các nguồn
+// public mỗi 10s trong lúc có client kết nối, diff tỉ số/trạng thái và push qua WebSocket.
+// Deploy: npx wrangler deploy
 
-import { buildLivePayload } from "../functions/_shared.js";
+import { buildLivePayload, ensureLocalSquads } from "../functions/_shared.js";
+import { onRequestGet as handleLive } from "../functions/api/live.js";
+import { onRequestGet as handleTeam } from "../functions/api/team.js";
 
 const POLL_INTERVAL_MS = 10000;
 const SNAPSHOT_KEY = "snapshot";
@@ -84,6 +87,8 @@ export class LiveHub {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
+    await ensureLocalSquads({ request, env: this.env });
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
@@ -146,23 +151,34 @@ export class LiveHub {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const pagesContext = {
+      request,
+      env,
+      waitUntil: ctx.waitUntil.bind(ctx)
+    };
 
     if (url.pathname === "/ws") {
       const id = env.LIVE_HUB.idFromName("global");
       return env.LIVE_HUB.get(id).fetch(request);
     }
 
-    if (url.pathname === "/health") {
+    if (url.pathname === "/api/live") {
+      return handleLive(pagesContext);
+    }
+
+    if (url.pathname === "/api/team") {
+      return handleTeam(pagesContext);
+    }
+
+    if (url.pathname === "/api/health") {
       return new Response(JSON.stringify({ ok: true, now: new Date().toISOString() }), {
         headers: { "content-type": "application/json; charset=utf-8" }
       });
     }
 
-    return new Response("LiveCup realtime worker. Kết nối WebSocket tại /ws", {
-      status: 200,
-      headers: { "content-type": "text/plain; charset=utf-8" }
-    });
+    // Các đường dẫn còn lại do static assets xử lý
+    return env.ASSETS.fetch(request);
   }
 };

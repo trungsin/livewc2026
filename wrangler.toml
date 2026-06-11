@@ -1,3 +1,19 @@
+# Cấu hình Worker duy nhất: static assets + API + WebSocket realtime.
+# Deploy: npx wrangler deploy (Workers Builds trên dashboard cũng chạy lệnh này)
+# Local: npx wrangler dev
+
 name = "livewc2026"
+main = "worker/index.js"
 compatibility_date = "2026-06-01"
-pages_build_output_dir = "."
+
+[assets]
+directory = "."
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "LIVE_HUB"
+class_name = "LiveHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveHub"]
