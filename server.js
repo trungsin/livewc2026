@@ -812,8 +812,10 @@ const server = http.createServer(async (req, res) => {
   await serveStatic(req, res);
 });
 
+const host = process.env.HOST || "0.0.0.0";
+
 loadLocalSquads().then(() => {
-  server.listen(port, () => {
-    console.log(`LiveCup server listening on http://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`LiveCup server listening on http://${host}:${port}`);
   });
 });
