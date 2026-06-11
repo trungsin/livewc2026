@@ -17,7 +17,7 @@ export async function onRequestGet(context) {
 
   try {
     const payload = await buildLivePayload();
-    const response = jsonResponse(payload, { maxAge: 30 });
+    const response = jsonResponse(payload, { maxAge: 10 });
     context.waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (error) {

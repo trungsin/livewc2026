@@ -37,11 +37,26 @@ npx wrangler pages dev .
 # mở http://localhost:8788
 ```
 
+## Realtime (WebSocket)
+
+Ngoài polling, app hỗ trợ push realtime qua WebSocket bằng một Worker riêng (`worker/`) dùng Durable Objects (có trong gói free): Durable Object poll các nguồn mỗi 10s khi có client kết nối, diff bàn thắng/trạng thái trận và đẩy ngay xuống mọi client. Frontend tự kết nối `wss://<domain>/ws`, nếu thất bại sẽ fallback về polling (10-15s khi có trận live).
+
+Deploy worker (sau khi đã deploy Pages):
+
+```bash
+npx wrangler deploy --config worker/wrangler.toml
+```
+
+Route `worldcup2026.leesun.space/ws` được khai báo sẵn trong `worker/wrangler.toml` — đổi `pattern`/`zone_name` nếu dùng domain khác. Yêu cầu domain là zone trong tài khoản Cloudflare của bạn (subdomain `*.pages.dev` không gắn route được — khi đó frontend tự dùng polling).
+
+Chạy thử worker ở local: `npx wrangler dev --config worker/wrangler.toml --port 8787`.
+
 ## Gói miễn phí Cloudflare Pages
 
 - Static requests: không giới hạn
 - Pages Functions: 100.000 requests/ngày
-- `/api/live` cache 30s và `/api/team` cache 15 phút tại edge, nên lượng request tới Functions rất thấp
+- `/api/live` cache 10s và `/api/team` cache 15 phút tại edge, nên lượng request tới Functions rất thấp
+- Durable Objects (worker realtime): trong hạn mức free, chỉ chạy khi có client kết nối
 
 ## Dữ liệu
 

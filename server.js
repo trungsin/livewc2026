@@ -695,8 +695,8 @@ async function buildLivePayload(force = false) {
   const key = "live";
   const cached = cache.get(key);
   const now = Date.now();
-  if (!force && cached && now - cached.createdAt < 30000) {
-    return { ...cached.payload, cache: { hit: true, ttlMs: 30000 - (now - cached.createdAt) } };
+  if (!force && cached && now - cached.createdAt < 10000) {
+    return { ...cached.payload, cache: { hit: true, ttlMs: 10000 - (now - cached.createdAt) } };
   }
 
   const [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball] = await Promise.all([
@@ -721,7 +721,7 @@ async function buildLivePayload(force = false) {
 
   const payload = {
     generatedAt: new Date().toISOString(),
-    cache: { hit: false, ttlMs: 30000 },
+    cache: { hit: false, ttlMs: 10000 },
     sources: [espn, wcGames, wcGroups, wcStadiums, wcTeams, openfootball].map((source) => ({
       name: source.name,
       ok: source.ok,
