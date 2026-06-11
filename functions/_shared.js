@@ -74,6 +74,15 @@ function teamCode(team) {
   return team?.abbreviation || team?.shortDisplayName?.slice(0, 3)?.toUpperCase() || "";
 }
 
+function espnMinute(status) {
+  const fromDisplay = Number.parseInt(String(status?.displayClock || ""), 10);
+  if (!Number.isNaN(fromDisplay) && fromDisplay > 0) {
+    return fromDisplay;
+  }
+  // ESPN trả clock bằng giây cho bóng đá
+  return Math.round(Number(status?.clock || 0) / 60);
+}
+
 function normalizeEspnEvent(event) {
   const competition = event.competitions?.[0] || {};
   const competitors = competition.competitors || [];
@@ -94,7 +103,7 @@ function normalizeEspnEvent(event) {
     awayTeamId: away.team?.id || "",
     homeScore: Number(home.score || 0),
     awayScore: Number(away.score || 0),
-    minute: Math.round(event.status?.clock || competition.status?.clock || 0),
+    minute: espnMinute(event.status || competition.status),
     status,
     stadium: competition.venue?.fullName || event.venue?.displayName || "",
     group: event.season?.slug === "group-stage" ? "Group stage" : "World Cup",
@@ -512,10 +521,15 @@ function buildEvents(matches) {
   const sourceEvents = [];
   for (const match of matches) {
     for (const detail of match.details || []) {
+      const players = (detail.athletesInvolved || [])
+        .map((athlete) => athlete.displayName || athlete.fullName)
+        .filter(Boolean)
+        .join(", ");
+      const eventName = detail.type?.text || detail.type?.displayName || "Sự kiện";
       sourceEvents.push({
         minute: detail.clock?.displayValue || detail.displayTime || `${match.minute || "--"}'`,
-        title: detail.type?.text || detail.type?.displayName || `${match.home} vs ${match.away}`,
-        copy: detail.text || detail.team?.displayName || "Sự kiện từ nguồn live.",
+        title: `${detail.scoringPlay ? "⚽ " : ""}${eventName} — ${match.home} ${match.homeScore}-${match.awayScore} ${match.away}`,
+        copy: detail.text || (players ? `Cầu thủ: ${players}.` : `Trận ${match.home} vs ${match.away}.`),
         source: "espn"
       });
     }
