@@ -240,6 +240,9 @@ async function loadTeamDetail(team) {
     if (team.code) {
       params.set("code", team.code);
     }
+    if (team.name) {
+      params.set("name", team.name);
+    }
     const response = await fetch(`/api/team?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -255,23 +258,35 @@ function renderTeamDetail(team, payload) {
   const detailTeam = payload.team || {};
   const players = payload.players || [];
   const logo = detailTeam.logo || team.logo || team.flag;
+  const ranking = detailTeam.fifaRanking || team.fifaRanking;
 
   teamDetail.innerHTML = `
     <div class="team-detail-header">
       ${imageTag(logo, team.name, "team-detail-logo")}
       <div>
         <h3>${escapeHtml(detailTeam.name || team.name)}</h3>
-        <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(team.group || "World Cup")}</p>
-        <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Thông tin đội lấy từ ESPN và worldcup26.")}</p>
+        <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(detailTeam.group || team.group || "World Cup")}${ranking ? ` / FIFA #${escapeHtml(ranking)}` : ""}</p>
+        <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Đội hình chính thức từ dữ liệu public, ảnh cầu thủ từ ESPN.")}</p>
       </div>
     </div>
     <div class="info-strip">
       <span>HLV: ${escapeHtml((payload.coach || []).join(", ") || "Chưa có dữ liệu")}</span>
-      <span>Nguồn: ESPN roster</span>
-      <span>Giá trị cầu thủ: chưa có nguồn free hợp lệ</span>
+      <span>Nguồn: ${escapeHtml(payload.rosterSource || "ESPN roster")}</span>
+      <span>${escapeHtml(players.length ? `${players.length} cầu thủ` : "Chưa có roster")}</span>
     </div>
     ${players.length ? renderPlayers(players) : `<div class="empty-state">Chưa có roster miễn phí cho đội này.</div>`}
   `;
+}
+
+const positionLabels = {
+  Goalkeeper: "Thủ môn",
+  Defender: "Hậu vệ",
+  Midfielder: "Tiền vệ",
+  Forward: "Tiền đạo"
+};
+
+function positionLabel(position) {
+  return positionLabels[position] || position || "Chưa rõ vị trí";
 }
 
 function renderPlayers(players) {
@@ -286,13 +301,12 @@ function renderPlayers(players) {
               <span>${escapeHtml(player.jersey ? `#${player.jersey}` : "")}</span>
             </div>
             <div class="player-meta">
-              <span>${escapeHtml(player.position || "Chưa rõ vị trí")}</span>
+              <span>${escapeHtml(positionLabel(player.position))}</span>
               <span>${escapeHtml(player.age ? `${player.age} tuổi` : "Chưa rõ tuổi")}</span>
               <span>${escapeHtml(player.citizenship || "Chưa rõ quốc tịch")}</span>
             </div>
             <div class="player-meta">
-              <span>Quốc tịch gốc: ${escapeHtml(player.originNationality || "Chưa có")}</span>
-              <span>CLB: ${escapeHtml(player.currentClub || "Chưa có trong nguồn free")}</span>
+              <span>CLB: ${escapeHtml(player.currentClub || "Chưa rõ CLB")}</span>
               <span>Giá trị: ${escapeHtml(player.marketValue || player.marketValueNote)}</span>
             </div>
           </div>

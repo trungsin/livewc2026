@@ -6,6 +6,32 @@ const root = __dirname;
 const port = Number(process.env.PORT || 4174);
 const cache = new Map();
 
+let localSquads = { updatedAt: "", source: "", teams: [] };
+let squadsByKey = new Map();
+
+async function loadLocalSquads() {
+  try {
+    const raw = await fs.readFile(path.join(root, "data", "squads.json"), "utf8");
+    localSquads = JSON.parse(raw);
+    squadsByKey = new Map();
+    for (const team of localSquads.teams || []) {
+      squadsByKey.set(canonicalTeamName(team.name), team);
+      if (team.fifaCode) {
+        squadsByKey.set(team.fifaCode.toLowerCase(), team);
+      }
+    }
+    console.log(`Local squads loaded: ${localSquads.teams.length} teams, ${localSquads.teams.reduce((sum, team) => sum + (team.players?.length || 0), 0)} players`);
+  } catch (error) {
+    console.warn(`Không nạp được data/squads.json: ${error.message}`);
+  }
+}
+
+function findLocalSquad({ name = "", code = "" } = {}) {
+  return (code && squadsByKey.get(String(code).toLowerCase()))
+    || (name && squadsByKey.get(canonicalTeamName(name)))
+    || null;
+}
+
 const SOURCE_URLS = {
   espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
   espnTeams: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams",
@@ -296,6 +322,26 @@ function buildTeams(matches, worldcupTeams = []) {
     });
   }
 
+  if (!teamsByKey.size) {
+    for (const squad of localSquads.teams || []) {
+      const key = canonicalTeamName(squad.name);
+      teamsByKey.set(key, {
+        id: key,
+        name: squad.name,
+        code: squad.fifaCode || "",
+        logo: squad.logo || "",
+        flag: squad.logo || "",
+        group: squad.group ? `Group ${squad.group}` : "World Cup",
+        espnId: "",
+        worldcup26Id: "",
+        iso2: squad.iso2 || "",
+        fifaRanking: squad.fifaRanking || null,
+        coach: squad.coach || "",
+        sources: new Set(["squads"])
+      });
+    }
+  }
+
   return [...teamsByKey.values()]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((team) => ({
@@ -310,26 +356,36 @@ function addTeamFromMatch(teamsByKey, worldcupByName, input) {
     return;
   }
   const wcTeam = worldcupByName.get(key);
+  const localSquad = squadsByKey.get(key);
   const existing = teamsByKey.get(key) || {
     id: key,
     name: input.name,
-    code: input.code || wcTeam?.fifa_code || "",
-    logo: input.logo || wcTeam?.flag || "",
-    flag: wcTeam?.flag || input.logo || "",
-    group: wcTeam?.groups ? `Group ${wcTeam.groups}` : input.group || "World Cup",
+    code: wcTeam?.fifa_code || localSquad?.fifaCode || input.code || "",
+    logo: input.logo || wcTeam?.flag || localSquad?.logo || "",
+    flag: wcTeam?.flag || input.logo || localSquad?.logo || "",
+    group: wcTeam?.groups
+      ? `Group ${wcTeam.groups}`
+      : localSquad?.group
+        ? `Group ${localSquad.group}`
+        : input.group || "World Cup",
     espnId: input.espnId || "",
     worldcup26Id: input.worldcup26Id || wcTeam?.id || "",
-    iso2: wcTeam?.iso2 || "",
+    iso2: wcTeam?.iso2 || localSquad?.iso2 || "",
+    fifaRanking: localSquad?.fifaRanking || null,
+    coach: localSquad?.coach || "",
     sources: new Set()
   };
 
-  existing.logo = existing.logo || input.logo || wcTeam?.flag || "";
-  existing.flag = existing.flag || wcTeam?.flag || input.logo || "";
-  existing.code = existing.code || input.code || wcTeam?.fifa_code || "";
+  existing.logo = existing.logo || input.logo || wcTeam?.flag || localSquad?.logo || "";
+  existing.flag = existing.flag || wcTeam?.flag || input.logo || localSquad?.logo || "";
+  existing.code = existing.code || wcTeam?.fifa_code || localSquad?.fifaCode || input.code || "";
   existing.espnId = existing.espnId || input.espnId || "";
   existing.worldcup26Id = existing.worldcup26Id || input.worldcup26Id || wcTeam?.id || "";
   for (const source of input.source || []) {
     existing.sources.add(source);
+  }
+  if (localSquad) {
+    existing.sources.add("squads");
   }
 
   teamsByKey.set(key, existing);
@@ -341,7 +397,10 @@ function isPlaceholderTeam(name, worldcup26Id) {
     || normalized.includes("group")
     || normalized === "tbd"
     || normalized.startsWith("winner ")
-    || /^w\d+$/.test(normalized);
+    || normalized.startsWith("loser ")
+    || /^[wl]\d+$/.test(normalized)
+    || /^[123][a-l]$/.test(normalized)
+    || /^3[a-l](\/[a-l])+$/.test(normalized);
 }
 
 function normalizeAthlete(athlete) {
@@ -358,7 +417,7 @@ function normalizeAthlete(athlete) {
     weight: athlete.displayWeight || "",
     citizenship: athlete.citizenship || athlete.flag?.alt || "",
     originNationality: athlete.birthPlace?.country || athlete.citizenship || athlete.flag?.alt || "",
-    currentClub: athlete.clubhouse || "",
+    currentClub: "",
     marketValue: null,
     marketValueNote: "Chưa có nguồn miễn phí hợp lệ",
     profileUrl: athlete.links?.find((link) => link.rel?.includes("playercard"))?.href || "",
@@ -366,43 +425,152 @@ function normalizeAthlete(athlete) {
   };
 }
 
-async function buildTeamPayload(teamId, fallbackCode = "") {
-  const key = `team:v2:${teamId || fallbackCode}`;
+function canonicalPersonName(name) {
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function ageFromDateOfBirth(dateOfBirth) {
+  if (!dateOfBirth) {
+    return "";
+  }
+  const birth = new Date(dateOfBirth);
+  if (Number.isNaN(birth.getTime())) {
+    return "";
+  }
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const monthDiff = now.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) {
+    age -= 1;
+  }
+  return age;
+}
+
+function normalizeLocalPlayer(player) {
+  return {
+    id: "",
+    name: player.name,
+    shortName: "",
+    headshot: "",
+    jersey: player.number ? String(player.number) : "",
+    position: player.position || "",
+    age: ageFromDateOfBirth(player.dateOfBirth),
+    dateOfBirth: player.dateOfBirth || "",
+    height: "",
+    weight: "",
+    citizenship: player.nationality || "",
+    originNationality: player.nationality || "",
+    currentClub: player.club || "",
+    marketValue: null,
+    marketValueNote: "Chưa có nguồn miễn phí hợp lệ",
+    profileUrl: "",
+    source: "squads"
+  };
+}
+
+function mergePlayers(localPlayers, espnPlayers) {
+  const espnByName = new Map(espnPlayers.map((player) => [canonicalPersonName(player.name), player]));
+  const matchedEspn = new Set();
+
+  const merged = localPlayers.map((player) => {
+    const espn = espnByName.get(canonicalPersonName(player.name));
+    if (!espn) {
+      return player;
+    }
+    matchedEspn.add(espn);
+    return {
+      ...player,
+      id: espn.id || player.id,
+      shortName: espn.shortName || player.shortName,
+      headshot: espn.headshot || player.headshot,
+      height: espn.height || player.height,
+      weight: espn.weight || player.weight,
+      profileUrl: espn.profileUrl || player.profileUrl,
+      source: "squads+espn"
+    };
+  });
+
+  for (const espn of espnPlayers) {
+    if (!matchedEspn.has(espn)) {
+      merged.push(espn);
+    }
+  }
+
+  return merged;
+}
+
+async function buildTeamPayload({ espnId = "", code = "", name = "" } = {}) {
+  const key = `team:v3:${espnId || code || canonicalTeamName(name)}`;
   const cached = cache.get(key);
   const now = Date.now();
   if (cached && now - cached.createdAt < 15 * 60 * 1000) {
     return { ...cached.payload, cache: { hit: true, ttlMs: 15 * 60 * 1000 - (now - cached.createdAt) } };
   }
 
-  if (!teamId) {
-    const payload = {
-      generatedAt: new Date().toISOString(),
-      cache: { hit: false, ttlMs: 0 },
-      team: { code: fallbackCode },
-      players: [],
-      notes: ["Đội này chưa có ESPN team id trong nguồn live, nên chưa tải được roster miễn phí."]
-    };
-    cache.set(key, { createdAt: now, payload });
-    return payload;
+  const localSquad = findLocalSquad({ name, code });
+  const localPlayers = (localSquad?.players || []).map(normalizeLocalPlayer);
+
+  let roster = { name: "espn-roster", ok: false, error: espnId ? null : "Đội chưa có ESPN team id" };
+  if (espnId) {
+    roster = await fetchJson(
+      "espn-roster",
+      `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/${encodeURIComponent(espnId)}/roster`
+    );
   }
 
-  const roster = await fetchJson(
-    "espn-roster",
-    `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/${encodeURIComponent(teamId)}/roster`
-  );
+  const espnPlayers = roster.ok ? (roster.data.athletes || []).map(normalizeAthlete) : [];
+  const players = localPlayers.length ? mergePlayers(localPlayers, espnPlayers) : espnPlayers;
 
-  const athletes = roster.ok ? (roster.data.athletes || []) : [];
+  const espnTeam = roster.ok ? normalizeRosterTeam(roster.data.team) : {};
+  const espnCoach = roster.ok
+    ? (roster.data.coach || []).map((coach) => `${coach.firstName || ""} ${coach.lastName || ""}`.trim()).filter(Boolean)
+    : [];
+  const localCoach = localSquad?.coach
+    ? [localSquad.coachNationality ? `${localSquad.coach} (${localSquad.coachNationality})` : localSquad.coach]
+    : [];
+
+  const sourceNames = [
+    localPlayers.length ? "squads.json (football-data.org + FIFA)" : null,
+    roster.ok ? "ESPN roster" : null
+  ].filter(Boolean);
+
+  const notes = [];
+  if (localPlayers.length) {
+    notes.push(`Đội hình chính thức 26 cầu thủ từ dữ liệu public (cập nhật ${localSquads.updatedAt || "?"}): số áo, vị trí, CLB, ngày sinh, quốc tịch.`);
+  }
+  if (roster.ok) {
+    notes.push("Ảnh chân dung và hồ sơ cầu thủ bổ sung từ ESPN public endpoint.");
+  }
+  if (!players.length) {
+    notes.push("Chưa có dữ liệu cầu thủ cho đội này từ các nguồn miễn phí.");
+  }
+  notes.push("Giá trị cầu thủ không có trong nguồn miễn phí hợp lệ, app không scrape Transfermarkt.");
+
   const payload = {
     generatedAt: new Date().toISOString(),
     cache: { hit: false, ttlMs: 15 * 60 * 1000 },
-    sources: [{ name: roster.name, ok: roster.ok, error: roster.error || null }],
-    team: roster.ok ? normalizeRosterTeam(roster.data.team) : { id: teamId, code: fallbackCode },
-    coach: roster.ok ? (roster.data.coach || []).map((coach) => `${coach.firstName || ""} ${coach.lastName || ""}`.trim()).filter(Boolean) : [],
-    players: athletes.map(normalizeAthlete),
-    notes: [
-      "Roster lấy từ ESPN public endpoint.",
-      "Giá trị cầu thủ không có trong nguồn miễn phí hợp lệ, app không scrape Transfermarkt."
-    ]
+    sources: [
+      { name: "squads-local", ok: localPlayers.length > 0, error: localPlayers.length ? null : "Không tìm thấy đội trong data/squads.json" },
+      { name: roster.name, ok: roster.ok, error: roster.error || null }
+    ],
+    rosterSource: sourceNames.join(" + ") || "Không có nguồn",
+    team: {
+      id: espnId,
+      code: localSquad?.fifaCode || espnTeam.code || code,
+      name: localSquad?.name || espnTeam.name || name,
+      logo: espnTeam.logo || localSquad?.logo || "",
+      fifaRanking: localSquad?.fifaRanking || null,
+      group: localSquad?.group ? `Group ${localSquad.group}` : "",
+      standingSummary: espnTeam.standingSummary || "",
+      recordSummary: espnTeam.recordSummary || ""
+    },
+    coach: localCoach.length ? localCoach : espnCoach,
+    players,
+    notes
   };
 
   cache.set(key, { createdAt: now, payload });
@@ -610,7 +778,11 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/api/team") {
     try {
-      const payload = await buildTeamPayload(url.searchParams.get("espnId") || "", url.searchParams.get("code") || "");
+      const payload = await buildTeamPayload({
+        espnId: url.searchParams.get("espnId") || "",
+        code: url.searchParams.get("code") || "",
+        name: url.searchParams.get("name") || ""
+      });
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 500, { error: error.message });
@@ -626,6 +798,8 @@ const server = http.createServer(async (req, res) => {
   await serveStatic(req, res);
 });
 
-server.listen(port, () => {
-  console.log(`LiveCup server listening on http://localhost:${port}`);
+loadLocalSquads().then(() => {
+  server.listen(port, () => {
+    console.log(`LiveCup server listening on http://localhost:${port}`);
+  });
 });
