@@ -6,6 +6,10 @@ let teams = [];
 let activeFilter = "all";
 let selectedTeamId = "";
 let lastPayload = null;
+let realtimeSocket = null;
+let realtimeConnected = false;
+let realtimeEvents = [];
+let pollTimer = null;
 
 const fallbackPayload = {
   generatedAt: new Date().toISOString(),
@@ -129,7 +133,9 @@ function renderMatches() {
 }
 
 function renderTimeline() {
-  if (!timeline.length) {
+  const items = [...realtimeEvents, ...timeline];
+
+  if (!items.length) {
     timelineList.innerHTML = `
       <li class="timeline-item">
         <span class="minute">--</span>
@@ -142,7 +148,7 @@ function renderTimeline() {
     return;
   }
 
-  timelineList.innerHTML = timeline.slice(0, 10).map((event) => `
+  timelineList.innerHTML = items.slice(0, 10).map((event) => `
     <li class="timeline-item">
       <span class="minute">${escapeHtml(event.minute || "--")}</span>
       <div>
@@ -240,6 +246,9 @@ async function loadTeamDetail(team) {
     if (team.code) {
       params.set("code", team.code);
     }
+    if (team.name) {
+      params.set("name", team.name);
+    }
     const response = await fetch(`/api/team?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -255,23 +264,35 @@ function renderTeamDetail(team, payload) {
   const detailTeam = payload.team || {};
   const players = payload.players || [];
   const logo = detailTeam.logo || team.logo || team.flag;
+  const ranking = detailTeam.fifaRanking || team.fifaRanking;
 
   teamDetail.innerHTML = `
     <div class="team-detail-header">
       ${imageTag(logo, team.name, "team-detail-logo")}
       <div>
         <h3>${escapeHtml(detailTeam.name || team.name)}</h3>
-        <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(team.group || "World Cup")}</p>
-        <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Thông tin đội lấy từ ESPN và worldcup26.")}</p>
+        <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(detailTeam.group || team.group || "World Cup")}${ranking ? ` / FIFA #${escapeHtml(ranking)}` : ""}</p>
+        <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Đội hình chính thức từ dữ liệu public, ảnh cầu thủ từ ESPN.")}</p>
       </div>
     </div>
     <div class="info-strip">
       <span>HLV: ${escapeHtml((payload.coach || []).join(", ") || "Chưa có dữ liệu")}</span>
-      <span>Nguồn: ESPN roster</span>
-      <span>Giá trị cầu thủ: chưa có nguồn free hợp lệ</span>
+      <span>Nguồn: ${escapeHtml(payload.rosterSource || "ESPN roster")}</span>
+      <span>${escapeHtml(players.length ? `${players.length} cầu thủ` : "Chưa có roster")}</span>
     </div>
     ${players.length ? renderPlayers(players) : `<div class="empty-state">Chưa có roster miễn phí cho đội này.</div>`}
   `;
+}
+
+const positionLabels = {
+  Goalkeeper: "Thủ môn",
+  Defender: "Hậu vệ",
+  Midfielder: "Tiền vệ",
+  Forward: "Tiền đạo"
+};
+
+function positionLabel(position) {
+  return positionLabels[position] || position || "Chưa rõ vị trí";
 }
 
 function renderPlayers(players) {
@@ -286,13 +307,12 @@ function renderPlayers(players) {
               <span>${escapeHtml(player.jersey ? `#${player.jersey}` : "")}</span>
             </div>
             <div class="player-meta">
-              <span>${escapeHtml(player.position || "Chưa rõ vị trí")}</span>
+              <span>${escapeHtml(positionLabel(player.position))}</span>
               <span>${escapeHtml(player.age ? `${player.age} tuổi` : "Chưa rõ tuổi")}</span>
               <span>${escapeHtml(player.citizenship || "Chưa rõ quốc tịch")}</span>
             </div>
             <div class="player-meta">
-              <span>Quốc tịch gốc: ${escapeHtml(player.originNationality || "Chưa có")}</span>
-              <span>CLB: ${escapeHtml(player.currentClub || "Chưa có trong nguồn free")}</span>
+              <span>CLB: ${escapeHtml(player.currentClub || "Chưa rõ CLB")}</span>
               <span>Giá trị: ${escapeHtml(player.marketValue || player.marketValueNote)}</span>
             </div>
           </div>
@@ -304,7 +324,7 @@ function renderPlayers(players) {
 
 function updateMetrics() {
   document.querySelector("#live-count").textContent = matches.filter((match) => match.status === "live").length;
-  document.querySelector("#event-count").textContent = timeline.length;
+  document.querySelector("#event-count").textContent = realtimeEvents.length + timeline.length;
   document.querySelector("#last-sync").textContent = lastPayload?.generatedAt ? formatClock(lastPayload.generatedAt) : formatClock();
 
   const okSources = (lastPayload?.sources || []).filter((source) => source.ok);
@@ -312,7 +332,9 @@ function updateMetrics() {
   sourceDetail.textContent = okSources.length
     ? `Đang dùng ${okSources.length} nguồn miễn phí, cache ${lastPayload?.cache?.hit ? "hit" : "mới"}`
     : "Không lấy được nguồn ngoài, đang dùng dữ liệu dự phòng.";
-  timelineStatus.textContent = matches.some((match) => match.status === "live") ? "Live feed" : "Theo dõi";
+  timelineStatus.textContent = realtimeConnected
+    ? "Realtime"
+    : matches.some((match) => match.status === "live") ? "Live feed" : "Theo dõi";
 }
 
 function renderAll() {
@@ -362,9 +384,76 @@ tabs.forEach((tab) => {
 searchInput.addEventListener("input", renderMatches);
 document.querySelector("#refresh-button").addEventListener("click", () => loadLiveData({ force: true }));
 
+function pollDelay() {
+  if (realtimeConnected) {
+    return 60000;
+  }
+  const hasLive = matches.some((match) => match.status === "live" || match.status === "halftime");
+  return hasLive ? 10000 : 30000;
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    await loadLiveData();
+    schedulePoll();
+  }, pollDelay());
+}
+
+function connectRealtime() {
+  if (typeof WebSocket === "undefined") {
+    return;
+  }
+
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  let socket;
+  try {
+    socket = new WebSocket(`${protocol}://${location.host}/ws`);
+  } catch {
+    return;
+  }
+
+  realtimeSocket = socket;
+
+  socket.addEventListener("open", () => {
+    realtimeConnected = true;
+    updateMetrics();
+    schedulePoll();
+  });
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type !== "live" || !message.payload) {
+        return;
+      }
+      if (Array.isArray(message.events) && message.events.length) {
+        realtimeEvents = [...message.events, ...realtimeEvents].slice(0, 20);
+      }
+      applyPayload(message.payload);
+    } catch {
+      // bỏ qua message không hợp lệ
+    }
+  });
+
+  const onDisconnect = () => {
+    if (realtimeSocket !== socket) {
+      return;
+    }
+    realtimeSocket = null;
+    realtimeConnected = false;
+    updateMetrics();
+    schedulePoll();
+    setTimeout(connectRealtime, 30000);
+  };
+
+  socket.addEventListener("close", onDisconnect);
+  socket.addEventListener("error", () => socket.close());
+}
+
 applyPayload({
   ...fallbackPayload,
   sources: [{ name: "loading", ok: true, label: "Đang tải dữ liệu" }]
 });
-loadLiveData();
-setInterval(loadLiveData, 30000);
+loadLiveData().then(schedulePoll);
+connectRealtime();
