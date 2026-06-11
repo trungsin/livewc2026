@@ -9,54 +9,43 @@ node server.js
 # mở http://localhost:4174
 ```
 
-## Deploy lên Cloudflare Pages (miễn phí)
+Hoặc mô phỏng đúng môi trường Cloudflare (có cả WebSocket realtime):
 
-Static files ở thư mục gốc, API (`/api/live`, `/api/team`) chạy bằng Pages Functions trong thư mục `functions/`.
+```bash
+npx wrangler dev --persist-to /tmp/wstate
+# mở http://localhost:8787
+```
 
-### Cách 1: Kết nối GitHub (khuyên dùng — tự deploy mỗi lần push)
+## Deploy lên Cloudflare Workers (miễn phí)
 
-1. Vào [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
+Toàn bộ app là **một Worker duy nhất** (cấu hình ở `wrangler.toml` gốc): static assets serve trực tiếp tại edge, `worker/index.js` xử lý `/api/live`, `/api/team` và WebSocket `/ws` (Durable Object). File không công khai được loại khỏi assets bằng `.assetsignore`.
+
+### Cách 1: Workers Builds — kết nối GitHub (tự deploy mỗi lần push)
+
+1. Vào [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Workers** → **Connect to Git** (Import a repository).
 2. Chọn repo `trungsin/livewc2026` và nhánh muốn deploy.
-3. Cấu hình build:
-   - **Framework preset**: None
-   - **Build command**: *(để trống)*
-   - **Build output directory**: `/` (thư mục gốc)
-4. Bấm **Save and Deploy**. Thư mục `functions/` được tự nhận diện, không cần cấu hình thêm.
+3. Để nguyên build/deploy command mặc định (`npx wrangler deploy`) — cấu hình đọc từ `wrangler.toml`. Lưu ý tên project phải là `livewc2026` (trùng `name` trong `wrangler.toml`).
+4. Gắn custom domain trong **Settings → Domains & Routes** của worker.
 
 ### Cách 2: Deploy bằng CLI
 
 ```bash
 npx wrangler login
-npx wrangler pages deploy . --project-name livewc2026
-```
-
-### Chạy thử môi trường Pages ở local
-
-```bash
-npx wrangler pages dev .
-# mở http://localhost:8788
+npx wrangler deploy
 ```
 
 ## Realtime (WebSocket)
 
-Ngoài polling, app hỗ trợ push realtime qua WebSocket bằng một Worker riêng (`worker/`) dùng Durable Objects (có trong gói free): Durable Object poll các nguồn mỗi 10s khi có client kết nối, diff bàn thắng/trạng thái trận và đẩy ngay xuống mọi client. Frontend tự kết nối `wss://<domain>/ws`, nếu thất bại sẽ fallback về polling (10-15s khi có trận live).
+Frontend tự kết nối `wss://<domain>/ws`. Durable Object `LiveHub` (có trong gói free, dùng SQLite class) poll các nguồn mỗi 10s khi có client kết nối, diff bàn thắng/trạng thái trận (bắt đầu, nghỉ giữa hiệp, kết thúc) và đẩy ngay xuống mọi client. Khi không còn ai xem, nó tự ngừng poll. Nếu WebSocket không kết nối được, frontend fallback về polling thích ứng (10s khi có trận live, 30s khi không).
 
-Deploy worker (sau khi đã deploy Pages):
+Thư mục `functions/` (Pages Functions) được giữ lại để ai muốn deploy kiểu Cloudflare Pages vẫn dùng được — Worker tái sử dụng chính các handler này.
 
-```bash
-npx wrangler deploy --config worker/wrangler.toml
-```
+## Gói miễn phí Cloudflare Workers
 
-Route `worldcup2026.leesun.space/ws` được khai báo sẵn trong `worker/wrangler.toml` — đổi `pattern`/`zone_name` nếu dùng domain khác. Yêu cầu domain là zone trong tài khoản Cloudflare của bạn (subdomain `*.pages.dev` không gắn route được — khi đó frontend tự dùng polling).
-
-Chạy thử worker ở local: `npx wrangler dev --config worker/wrangler.toml --port 8787`.
-
-## Gói miễn phí Cloudflare Pages
-
-- Static requests: không giới hạn
-- Pages Functions: 100.000 requests/ngày
-- `/api/live` cache 10s và `/api/team` cache 15 phút tại edge, nên lượng request tới Functions rất thấp
-- Durable Objects (worker realtime): trong hạn mức free, chỉ chạy khi có client kết nối
+- Static assets: không giới hạn request
+- Worker requests (API + WS): 100.000 requests/ngày
+- `/api/live` cache 10s và `/api/team` cache 15 phút tại edge, nên lượng request thực tế rất thấp
+- Durable Objects: trong hạn mức free, chỉ chạy khi có client kết nối
 
 ## Dữ liệu
 
