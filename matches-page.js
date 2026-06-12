@@ -1,4 +1,5 @@
 let matches = [];
+let predictionStats = null;
 let activeTab = new URLSearchParams(location.search).get("tab") === "results" ? "results" : "schedule";
 let pollTimer = null;
 let didAutoScroll = false;
@@ -67,9 +68,11 @@ async function loadMatches() {
     }
     const payload = await response.json();
     matches = Array.isArray(payload.matches) ? payload.matches : [];
+    predictionStats = payload.predictionStats || null;
   } catch (error) {
     console.warn("Không tải được lịch đấu.", error);
     matches = [];
+    predictionStats = null;
   }
   renderMatchesPage();
 }
@@ -101,7 +104,7 @@ matchesContainer.addEventListener("click", (event) => {
   }
   const match = matches.find((item) => String(item.id) === row.dataset.matchId);
   if (match) {
-    openMatchTimelineModal(match);
+    openMatchTimelineModal(match, predictionStats);
   }
 });
 

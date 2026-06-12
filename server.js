@@ -3,7 +3,10 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { translateEspnCommentary, looksUntranslated, logUntranslated } = require("./espn-commentary-vietnamese-translator.js");
 const { translateViaCache } = require("./gemini-commentary-translation-fallback.js");
-const { translateTeamNamesInText, displayTeamName } = require("./team-names-vietnamese.js");
+const { translateTeamNamesInText } = require("./team-names-vietnamese.js");
+const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
+const { buildMatchInsight } = require("./match-insight-builder.js");
+const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -39,7 +42,6 @@ const SOURCE_URLS = {
   espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
   espnTeams: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams",
   espnSummary: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary",
-  bongdaplusPredictions: "https://bongdaplus.vn/nhan-dinh-bong-da-tags",
   worldcup26Games: "https://worldcup26.ir/get/games",
   worldcup26Groups: "https://worldcup26.ir/get/groups",
   worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
@@ -65,218 +67,6 @@ function sendJson(res, status, payload) {
     "cache-control": "no-store"
   });
   res.end(body);
-}
-
-function fetchText(name, url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  return fetch(url, {
-    signal: controller.signal,
-    headers: { "user-agent": "LiveCup/1.0 (+local development)" }
-  })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      return response.text();
-    })
-    .then((data) => ({ name, ok: true, data }))
-    .catch((error) => ({ name, ok: false, error: error.message }))
-    .finally(() => clearTimeout(timeout));
-}
-
-function decodeHtmlEntities(value) {
-  return String(value || "")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, num) => String.fromCodePoint(Number(num)))
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, " ");
-}
-
-function stripHtmlTags(value) {
-  return String(value || "").replace(/<[^>]*>/g, " ");
-}
-
-function collapseSpaces(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function foldLooseText(value) {
-  return collapseSpaces(decodeHtmlEntities(value))
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function vnDayKey(isoValue) {
-  if (!isoValue) {
-    return "unknown";
-  }
-
-  const date = new Date(isoValue);
-  if (Number.isNaN(date.getTime())) {
-    return "unknown";
-  }
-
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Ho_Chi_Minh"
-  }).format(date);
-}
-
-function parseBongdaplusListingTitle(value) {
-  const text = collapseSpaces(decodeHtmlEntities(stripHtmlTags(value)));
-  const match = text.match(/^(\d{1,2})h(\d{2}) ngày (\d{1,2})\/(\d{1,2}):\s*(.+?)\s+vs\s+(.+)$/i);
-  if (!match) {
-    return null;
-  }
-
-  const [, hour, minute, day, month, home, away] = match;
-  return {
-    title: text,
-    timeKey: `${hour.padStart(2, "0")}:${minute}`,
-    dateKey: `${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
-    home: collapseSpaces(home),
-    away: collapseSpaces(away),
-    searchKey: foldLooseText(text)
-  };
-}
-
-function parseBongdaplusPredictionListings(html) {
-  const items = [];
-  const blocks = String(html || "").match(/<li class="news">[\s\S]*?<\/li>/g) || [];
-  for (const block of blocks) {
-    if (!/\/world-cup\/nhan-dinh-bong-da-/i.test(block)) {
-      continue;
-    }
-    const href = decodeHtmlEntities((block.match(/<a class="title" href="([^"]+)">/i) || [])[1] || "");
-    const title = decodeHtmlEntities((block.match(/<a class="title" href="[^"]+">\s*([\s\S]*?)\s*<\/a>/i) || [])[1] || "");
-    const fullTitle = decodeHtmlEntities((block.match(/<a class="thumb"[^>]*><img alt="([^"]+)"/i) || [])[1] || "");
-    const parsed = parseBongdaplusListingTitle(title);
-    if (!href || !parsed) {
-      continue;
-    }
-    items.push({
-      url: new URL(href, SOURCE_URLS.bongdaplusPredictions).toString(),
-      title: fullTitle || `Nhận định bóng đá ${parsed.home} vs ${parsed.away}`,
-      listingTitle: parsed.title,
-      dateKey: parsed.dateKey,
-      timeKey: parsed.timeKey,
-      home: parsed.home,
-      away: parsed.away,
-      searchKey: parsed.searchKey,
-      matchKey: `${parsed.dateKey}::${parsed.searchKey}`
-    });
-  }
-  return items;
-}
-
-function parseBongdaplusPredictionArticle(html, item) {
-  const title = decodeHtmlEntities((String(html || "").match(/<h1>([\s\S]*?)<\/h1>/i) || [])[1] || item.title || item.listingTitle || "");
-  const summary = decodeHtmlEntities(
-    (String(html || "").match(/<div class="summary bdr"><b>([\s\S]*?)<\/b>/i) || [])[1]
-    || (String(html || "").match(/<meta property="og:description" content="([^"]+)"/i) || [])[1]
-    || ""
-  );
-  const text = collapseSpaces(decodeHtmlEntities(stripHtmlTags(html)));
-  const sectionStart = text.indexOf("BONGDAPLUS dự đoán tỉ số");
-  let tip = summary;
-  let score = "";
-
-  if (sectionStart >= 0) {
-    const section = text.slice(sectionStart);
-    const scoreMatch = section.match(/Dự đoán:\s*([0-9]{1,2}\s*-\s*[0-9]{1,2})/i);
-    if (scoreMatch) {
-      score = scoreMatch[1].replace(/\s+/g, "");
-    }
-    const tipText = section
-      .split(/Dự đoán:/i)[0]
-      .replace(/^BONGDAPLUS dự đoán tỉ số[^.]*\.?\s*/i, "")
-      .trim();
-    if (tipText) {
-      tip = tipText;
-    }
-  }
-
-  return {
-    source: "bongdaplus",
-    url: item.url,
-    title,
-    summary,
-    tip,
-    score
-  };
-}
-
-function matchPredictionItem(match, items) {
-  const dayKey = vnDayKey(match.kickoffUtc);
-  const matchDateKey = dayKey === "unknown" ? "" : dayKey.slice(5);
-  const homeName = foldLooseText(displayTeamName(match.home));
-  const awayName = foldLooseText(displayTeamName(match.away));
-  const reverseKey = `${matchDateKey}::${awayName}${homeName}`;
-  const forwardKey = `${matchDateKey}::${homeName}${awayName}`;
-
-  return items.find((item) => {
-    if (item.dateKey !== matchDateKey) {
-      return false;
-    }
-    const key = item.searchKey;
-    return key.includes(homeName) && key.includes(awayName) || item.matchKey === forwardKey || item.matchKey === reverseKey;
-  }) || null;
-}
-
-async function buildBongdaplusPredictions(matches) {
-  const cacheKey = "bongdaplus-predictions";
-  const cached = cache.get(cacheKey);
-  const now = Date.now();
-  if (cached && now - cached.createdAt < 6 * 60 * 60 * 1000) {
-    return cached.payload;
-  }
-
-  const listing = await fetchText("bongdaplus-listing", SOURCE_URLS.bongdaplusPredictions);
-  if (!listing.ok) {
-    return new Map();
-  }
-
-  const items = parseBongdaplusPredictionListings(listing.data);
-  const matchedItems = new Map();
-  const matchedKeys = new Map();
-
-  for (const match of matches) {
-    const item = matchPredictionItem(match, items);
-    if (!item) {
-      continue;
-    }
-    matchedItems.set(item.url, item);
-    matchedKeys.set(match.id, item.url);
-  }
-
-  const predictionsByUrl = new Map();
-  await Promise.all([...matchedItems.values()].map(async (item) => {
-    const article = await fetchText(`bongdaplus-article:${item.url}`, item.url);
-    if (!article.ok) {
-      return;
-    }
-    predictionsByUrl.set(item.url, parseBongdaplusPredictionArticle(article.data, item));
-  }));
-
-  const predictionsByMatchId = new Map();
-  for (const [matchId, url] of matchedKeys.entries()) {
-    const prediction = predictionsByUrl.get(url);
-    if (prediction) {
-      predictionsByMatchId.set(matchId, prediction);
-    }
-  }
-
-  cache.set(cacheKey, { createdAt: now, payload: predictionsByMatchId });
-  return predictionsByMatchId;
 }
 
 function normalizeStatus(status) {
@@ -1164,6 +954,13 @@ async function buildLivePayload(force = false) {
     : [];
   const matches = mergeMatches([espnMatches, wcMatches, openMatches]);
   const predictionsByMatchId = await buildBongdaplusPredictions(matches);
+  const matchesWithPredictions = matches.map((match) => ({
+    ...match,
+    prediction: predictionsByMatchId.get(match.id) || null
+  }));
+
+  await Promise.all(matchesWithPredictions.map((match) => recordPrediction(match, { prediction: match.prediction })));
+  await scoreFinishedMatches(matchesWithPredictions);
 
   const payload = {
     generatedAt: new Date().toISOString(),
@@ -1173,10 +970,8 @@ async function buildLivePayload(force = false) {
       ok: source.ok,
       error: source.error || null
     })),
-    matches: matches.map((match) => ({
-      ...match,
-      prediction: predictionsByMatchId.get(match.id) || null
-    })),
+    matches: matchesWithPredictions,
+    predictionStats: getStats(),
     teams: buildTeams(matches, teamList),
     events: buildEvents(matches),
     standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : [], teamsById)
@@ -1235,6 +1030,48 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/match-insight") {
+    const matchId = url.searchParams.get("matchId") || "";
+    if (!/^[\w-]+$/.test(matchId)) {
+      sendJson(res, 400, { error: "matchId không hợp lệ" });
+      return;
+    }
+
+    try {
+      const livePayload = await buildLivePayload(false);
+      const match = (livePayload.matches || []).find((item) => item.id === matchId);
+      if (!match) {
+        sendJson(res, 404, { error: "Không tìm thấy trận đấu" });
+        return;
+      }
+
+      const key = `insight-${matchId}`;
+      const cached = cache.get(key);
+      const now = Date.now();
+      // Insight nạp theo trận, cache ngắn để odds không bị cũ quá lâu.
+      if (cached && now - cached.createdAt < 5 * 60 * 1000) {
+        await recordPrediction(match, cached.payload);
+        sendJson(res, 200, {
+          ...cached.payload,
+          cache: { hit: true, ttlMs: 5 * 60 * 1000 - (now - cached.createdAt) }
+        });
+        return;
+      }
+
+      const insight = await buildMatchInsight({ match, prediction: match.prediction });
+      await recordPrediction(match, insight);
+      const payload = {
+        ...insight,
+        cache: { hit: false, ttlMs: 5 * 60 * 1000 }
+      };
+      cache.set(key, { createdAt: now, payload });
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
     }
     return;
   }

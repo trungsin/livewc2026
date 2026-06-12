@@ -76,6 +76,33 @@ function filteredMatches() {
   });
 }
 
+// Trận FT chỉ ở lại tab "Tất cả" ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở tab Kết quả).
+const FT_LINGER_MS = 10 * 60 * 1000;
+// Khi không bắt được khoảnh khắc FT (mở trang sau khi trận đã xong), ước lượng từ giờ bóng lăn:
+// 90' + nghỉ giữa hiệp + bù giờ ≈ 120', cộng 10 phút hiển thị.
+const FT_LINGER_FROM_KICKOFF_MS = 130 * 60 * 1000;
+const ftSeenAt = new Map();
+const lastStatusById = new Map();
+
+function trackFinishedTransitions(list) {
+  const now = Date.now();
+  for (const match of list) {
+    const previous = lastStatusById.get(match.id);
+    if (match.status === "finished" && previous && previous !== "finished" && !ftSeenAt.has(match.id)) {
+      ftSeenAt.set(match.id, now);
+    }
+    lastStatusById.set(match.id, match.status);
+  }
+}
+
+function finishedStillInLiveSection(match, now) {
+  if (ftSeenAt.has(match.id)) {
+    return now - ftSeenAt.get(match.id) < FT_LINGER_MS;
+  }
+  const kickoff = Date.parse(match.kickoffUtc || "");
+  return !Number.isNaN(kickoff) && now - kickoff < FT_LINGER_FROM_KICKOFF_MS;
+}
+
 function homeMatchesForActiveTab() {
   const today = vnDayKey(new Date());
 
@@ -97,6 +124,7 @@ function homeMatchesForActiveTab() {
       .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
   }
 
+  const now = Date.now();
   return matches.filter((match) => {
     const isLive = match.status === "live" || match.status === "halftime";
     if (isLive) {
@@ -104,6 +132,9 @@ function homeMatchesForActiveTab() {
     }
     if (vnDayKey(match.kickoffUtc) !== today) {
       return false;
+    }
+    if (match.status === "finished") {
+      return finishedStillInLiveSection(match, now);
     }
     return match.status === "upcoming";
   });
@@ -126,6 +157,7 @@ function renderMatches() {
         <span class="team-name">${escapeHtml(displayTeamName(match.home))}</span>
       </div>
       <div class="score-block">
+        ${match.status === "live" || match.status === "halftime" ? `<button class="match-info-button" type="button" data-open-match-modal="${escapeHtml(match.id)}" aria-label="Mở nhận định và kèo" title="Mở nhận định và kèo">ⓘ</button>` : ""}
         <div class="score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</div>
         <div class="match-meta">${matchStatus(match)} / ${escapeHtml(match.group || "World Cup")}</div>
         <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
@@ -332,9 +364,23 @@ function applyPayload(payload) {
   lastPayload = payload;
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
+  trackFinishedTransitions(matches);
   syncLiveCommentary();
   renderAll();
 }
+
+matchList.addEventListener("click", (event) => {
+  const infoButton = event.target.closest("[data-open-match-modal]");
+  if (!infoButton) {
+    return;
+  }
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  const match = matches.find((item) => String(item.id) === infoButton.dataset.openMatchModal);
+  if (match) {
+    openMatchTimelineModal(match, lastPayload?.predictionStats);
+  }
+});
 
 matchList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-live-id]");
@@ -359,7 +405,7 @@ matchList.addEventListener("click", (event) => {
   }
   const match = matches.find((item) => String(item.id) === card.dataset.matchId);
   if (match) {
-    openMatchTimelineModal(match);
+    openMatchTimelineModal(match, lastPayload?.predictionStats);
   }
 });
 
@@ -370,7 +416,7 @@ resultsList.addEventListener("click", (event) => {
   }
   const match = matches.find((item) => String(item.id) === card.dataset.matchId);
   if (match) {
-    openMatchTimelineModal(match);
+    openMatchTimelineModal(match, lastPayload?.predictionStats);
   }
 });
 
@@ -381,7 +427,7 @@ scheduleList.addEventListener("click", (event) => {
   }
   const match = matches.find((item) => String(item.id) === row.dataset.matchId);
   if (match) {
-    openMatchTimelineModal(match);
+    openMatchTimelineModal(match, lastPayload?.predictionStats);
   }
 });
 

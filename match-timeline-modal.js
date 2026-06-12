@@ -64,7 +64,14 @@ function matchModalStatusLabel(match) {
   return "Sắp đấu";
 }
 
-function openMatchTimelineModal(match) {
+function modalCenterHtml(match) {
+  if (match.status === "upcoming") {
+    return `<span class="result-score kickoff-time">${escapeHtml(match.kickoffUtc ? formatKickoff(match.kickoffUtc) : (match.kickoff || "Sắp đấu"))}</span>`;
+  }
+  return `<span class="result-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span>`;
+}
+
+function openMatchTimelineModal(match, predictionStats = null) {
   const modal = ensureMatchModal();
   modalMatchId = match.id;
 
@@ -74,17 +81,34 @@ function openMatchTimelineModal(match) {
         ${imageTag(match.homeLogo, displayTeamName(match.home), "team-logo")}
         <span class="team-name">${escapeHtml(displayTeamName(match.home))}</span>
       </span>
-      <span class="result-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span>
+      ${modalCenterHtml(match)}
       <span class="result-team away">
         <span class="team-name">${escapeHtml(displayTeamName(match.away))}</span>
         ${imageTag(match.awayLogo, displayTeamName(match.away), "team-logo")}
       </span>
     </div>
     <div class="match-meta">${escapeHtml(matchModalStatusLabel(match))} / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
-    ${renderPredictionLine(match)}
-    <div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>
+    ${match.status === "upcoming" ? "" : `<div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>`}
+    <div class="match-modal-insight"><div class="empty-state">Đang tải nhận định &amp; kèo…</div></div>
   `;
   modal.classList.remove("hidden");
+
+  const insightContainer = modal.querySelector(".match-modal-insight");
+  fetchMatchInsight(match.id)
+    .then((insight) => {
+      if (modalMatchId === match.id) {
+        insightContainer.innerHTML = renderInsightSection(insight, predictionStats);
+      }
+    })
+    .catch(() => {
+      if (modalMatchId === match.id) {
+        insightContainer.innerHTML = "";
+      }
+    });
+
+  if (match.status === "upcoming") {
+    return;
+  }
 
   const container = modal.querySelector(".match-modal-timeline");
   const fallbackEntries = entriesFromMatchDetails(match);

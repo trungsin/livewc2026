@@ -200,6 +200,16 @@ function renderPredictionLine(match, { compact = false } = {}) {
   `;
 }
 
+function predictionStatsBadge(stats, source, metric = "oneXTwo") {
+  const value = stats?.[source]?.[metric];
+  if (!value || value.total < 3) {
+    return "";
+  }
+
+  const label = metric === "score" ? "tỉ số" : "1X2";
+  return `<span class="prediction-badge">Đúng ${escapeHtml(value.correct)}/${escapeHtml(value.total)} trận (${escapeHtml(label)})</span>`;
+}
+
 function renderMatchRow(match) {
   const phase = match.group && match.group !== "World Cup" ? match.group : match.type || match.group || "World Cup";
   const meta = [phase, match.stadium || ""].filter(Boolean).join(" · ");

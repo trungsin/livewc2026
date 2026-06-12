@@ -568,6 +568,7 @@ input {
 }
 
 .score-block {
+  position: relative;
   min-width: 110px;
   text-align: center;
 }
@@ -1089,6 +1090,21 @@ input {
   grid-column: 1 / -1;
 }
 
+  .standings-groups {
+    grid-template-columns: 1fr;
+    padding: 0 14px 14px;
+  }
+
+  .standing-row {
+    grid-template-columns: 1fr;
+  }
+
+  .standing-meta {
+    justify-content: space-between;
+    white-space: normal;
+  }
+}
+
 .prediction-line {
   grid-column: 1 / -1;
   display: grid;
@@ -1130,6 +1146,32 @@ input {
   font-size: 12px;
 }
 
+.prediction-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prediction-badges.inline {
+  display: inline-flex;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.prediction-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid rgba(11, 111, 98, 0.2);
+  border-radius: 999px;
+  background: #e7f5ef;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .match-modal .prediction-line {
   margin: 10px 0 14px;
   border: 1px solid var(--line);
@@ -1138,21 +1180,6 @@ input {
 
 .match-modal .prediction-line.compact {
   margin: 8px 0 0;
-}
-
-  .standings-groups {
-    grid-template-columns: 1fr;
-    padding: 0 14px 14px;
-  }
-
-  .standing-row {
-    grid-template-columns: 1fr;
-  }
-
-  .standing-meta {
-    justify-content: space-between;
-    white-space: normal;
-  }
 }
 
 /* Modal diễn biến trận đấu (mở từ thẻ kết quả) */
@@ -1222,8 +1249,138 @@ input {
   padding-right: 24px;
 }
 
+.result-score.kickoff-time {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
 .match-modal-card .timeline {
   padding: 12px 0 0;
+}
+
+.match-info-button {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 6px 16px rgba(15, 27, 38, 0.12);
+}
+
+.match-info-button:hover {
+  border-color: var(--accent);
+  background: #e7f5ef;
+}
+
+.match-row.clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.match-row.clickable:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.match-insight-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.insight-section-header h3,
+.insight-source h4 {
+  margin: 0;
+  color: var(--ink);
+}
+
+.insight-section-header h3 {
+  font-size: 18px;
+}
+
+.insight-source {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.insight-source-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.insight-source h4 {
+  font-size: 14px;
+}
+
+.insight-tip,
+.insight-score,
+.insight-disclaimer {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.insight-tip {
+  color: var(--text);
+}
+
+.insight-score,
+.insight-disclaimer {
+  color: var(--muted);
+}
+
+.odds-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.odds-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.odds-table th,
+.odds-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.odds-table th {
+  background: #f1f5f6;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.odds-table tr:last-child td {
+  border-bottom: 0;
 }
 
 /* Tường thuật trực tiếp kiểu bongdaplus (panel Diễn biến + modal) */

@@ -12,3 +12,4 @@ plans/
 release-manifest.json
 logs/
 data/commentary-translation-cache.json
+data/prediction-tracking.json
