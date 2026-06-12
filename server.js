@@ -292,7 +292,8 @@ function mergeMatches(sourceLists) {
       if (!existing.stadium && match.stadium) {
         existing.stadium = match.stadium;
       }
-      if (!existing.group && match.group) {
+      // ESPN chỉ trả "Group stage" chung chung; ưu tiên nguồn có chữ bảng cụ thể (Group A-L)
+      if (match.group && (!existing.group || (!normalizeGroupLetter(existing.group) && normalizeGroupLetter(match.group)))) {
         existing.group = match.group;
       }
     }
@@ -633,24 +634,31 @@ function buildEvents(matches) {
 }
 
 function buildStandings(matches, groupsFromApi, teamsById = new Map()) {
+  // Thống kê tính từ kết quả trận đã merge để BXH luôn khớp phần Kết quả;
+  // upstream /get/groups cập nhật chậm nên chỉ dùng làm danh sách 4 đội mỗi bảng.
+  const statsByTeam = new Map();
+  const groupTeamKeys = new Map();
+  for (const match of matches) {
+    if (match.status !== "finished") {
+      continue;
+    }
+    const groupLetter = normalizeGroupLetter(match.group);
+    if (!groupLetter) {
+      continue;
+    }
+    recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, match.home, match.homeScore, match.awayScore);
+    recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, match.away, match.awayScore, match.homeScore);
+  }
+
   if (Array.isArray(groupsFromApi) && groupsFromApi.length) {
     const groups = [];
     for (const group of groupsFromApi) {
       const rows = (group.teams || []).map((team) => {
-        const sourceTeam = teamsById.get(String(team.team_id));
-        const won = Number(team.w || team.won || 0);
-        const drawn = Number(team.d || team.drawn || 0);
-        const lost = Number(team.l || team.lost || 0);
-        return {
-          team: sourceTeam?.name_en || team.name_en || `Team ${team.team_id || ""}`.trim(),
-          // upstream sometimes updates w/d/l/pts before mp; derive played when mp lags
-          played: Math.max(Number(team.mp || team.played || 0), won + drawn + lost),
-          won,
-          drawn,
-          lost,
-          diff: Number(team.gd || (Number(team.gf || 0) - Number(team.ga || 0))),
-          points: Number(team.pts || team.points || 0)
-        };
+        const name = teamsById.get(String(team.team_id))?.name_en || team.name_en || `Team ${team.team_id || ""}`.trim();
+        const computed = statsByTeam.get(canonicalTeamName(name));
+        return computed
+          ? { ...computed, team: name }
+          : { team: name, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 };
       }).sort(sortStandingRows);
 
       if (rows.length) {
@@ -662,29 +670,24 @@ function buildStandings(matches, groupsFromApi, teamsById = new Map()) {
     }
   }
 
-  const groups = new Map();
-  const completed = matches.filter((match) => match.status === "finished");
-  for (const match of completed) {
-    const groupLetter = normalizeGroupLetter(match.group);
-    if (!groupLetter) {
-      continue;
-    }
-    if (!groups.has(groupLetter)) {
-      groups.set(groupLetter, new Map());
-    }
-    const table = groups.get(groupLetter);
-    ensureTeam(table, match.home);
-    ensureTeam(table, match.away);
-    applyResult(table.get(match.home), match.homeScore, match.awayScore);
-    applyResult(table.get(match.away), match.awayScore, match.homeScore);
-  }
-
-  return [...groups.entries()]
+  return [...groupTeamKeys.entries()]
     .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
-    .map(([group, table]) => ({
+    .map(([group, teamKeys]) => ({
       group,
-      rows: [...table.values()].sort(sortStandingRows)
+      rows: [...teamKeys].map((key) => statsByTeam.get(key)).sort(sortStandingRows)
     }));
+}
+
+function recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, teamName, goalsFor, goalsAgainst) {
+  const key = canonicalTeamName(teamName);
+  if (!statsByTeam.has(key)) {
+    statsByTeam.set(key, { team: teamName, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 });
+  }
+  applyResult(statsByTeam.get(key), goalsFor, goalsAgainst);
+  if (!groupTeamKeys.has(groupLetter)) {
+    groupTeamKeys.set(groupLetter, new Set());
+  }
+  groupTeamKeys.get(groupLetter).add(key);
 }
 
 function normalizeGroupLetter(value) {
@@ -694,12 +697,6 @@ function normalizeGroupLetter(value) {
 
 function sortStandingRows(a, b) {
   return b.points - a.points || b.diff - a.diff || a.team.localeCompare(b.team);
-}
-
-function ensureTeam(table, team) {
-  if (!table.has(team)) {
-    table.set(team, { team, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 });
-  }
 }
 
 function applyResult(row, goalsFor, goalsAgainst) {

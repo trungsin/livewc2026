@@ -23,8 +23,6 @@ const resultsList = document.querySelector("#results-list");
 const resultsCount = document.querySelector("#results-count");
 const searchInput = document.querySelector("#search-input");
 const tabs = document.querySelectorAll(".tab");
-const sourceSummary = document.querySelector("#source-summary");
-const sourceDetail = document.querySelector("#source-detail");
 const timelineStatus = document.querySelector("#timeline-status");
 
 function formatClock(value = new Date()) {
@@ -68,11 +66,45 @@ function filteredMatches() {
   });
 }
 
+// Trận FT chỉ ở lại khu live ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở Kết quả mới nhất).
+const FT_LINGER_MS = 10 * 60 * 1000;
+// Khi không bắt được khoảnh khắc FT (mở trang sau khi trận đã xong), ước lượng từ giờ bóng lăn:
+// 90' + nghỉ giữa hiệp + bù giờ ≈ 120', cộng 10 phút hiển thị.
+const FT_LINGER_FROM_KICKOFF_MS = 130 * 60 * 1000;
+const ftSeenAt = new Map();
+const lastStatusById = new Map();
+
+function trackFinishedTransitions(list) {
+  const now = Date.now();
+  for (const match of list) {
+    const previous = lastStatusById.get(match.id);
+    if (match.status === "finished" && previous && previous !== "finished" && !ftSeenAt.has(match.id)) {
+      ftSeenAt.set(match.id, now);
+    }
+    lastStatusById.set(match.id, match.status);
+  }
+}
+
+function finishedStillInLiveSection(match, now) {
+  if (ftSeenAt.has(match.id)) {
+    return now - ftSeenAt.get(match.id) < FT_LINGER_MS;
+  }
+  const kickoff = Date.parse(match.kickoffUtc || "");
+  return !Number.isNaN(kickoff) && now - kickoff < FT_LINGER_FROM_KICKOFF_MS;
+}
+
 function homeMatches() {
   const today = vnDayKey(new Date());
+  const now = Date.now();
   return matches.filter((match) => {
     const isLive = match.status === "live" || match.status === "halftime";
-    return isLive || vnDayKey(match.kickoffUtc) === today;
+    if (isLive) {
+      return true;
+    }
+    if (vnDayKey(match.kickoffUtc) !== today) {
+      return false;
+    }
+    return match.status === "finished" ? finishedStillInLiveSection(match, now) : true;
   });
 }
 
@@ -149,7 +181,7 @@ function renderResults() {
   }
 
   resultsList.innerHTML = finished.slice(0, 6).map((match) => `
-    <article class="result-card">
+    <article class="result-card clickable" data-match-id="${escapeHtml(match.id)}" title="Xem diễn biến trận đấu">
       <div class="result-teams">
         <span class="result-team">
           ${imageTag(match.homeLogo, match.home, "team-logo")}
@@ -199,11 +231,6 @@ function updateMetrics() {
   document.querySelector("#event-count").textContent = realtimeEvents.length + timeline.length;
   document.querySelector("#last-sync").textContent = lastPayload?.generatedAt ? formatClock(lastPayload.generatedAt) : formatClock();
 
-  const okSources = (lastPayload?.sources || []).filter((source) => source.ok);
-  sourceSummary.textContent = okSources.length ? okSources.map((source) => source.name).join(" + ") : "Fallback";
-  sourceDetail.textContent = okSources.length
-    ? `Đang dùng ${okSources.length} nguồn miễn phí, cache ${lastPayload?.cache?.hit ? "hit" : "mới"}`
-    : "Không lấy được nguồn ngoài, đang dùng dữ liệu dự phòng.";
   timelineStatus.textContent = realtimeConnected
     ? "Realtime"
     : matches.some((match) => match.status === "live" || match.status === "halftime") ? "Live feed" : "Theo dõi";
@@ -237,8 +264,20 @@ function applyPayload(payload) {
   lastPayload = payload;
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
+  trackFinishedTransitions(matches);
   renderAll();
 }
+
+resultsList.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-match-id]");
+  if (!card) {
+    return;
+  }
+  const match = matches.find((item) => String(item.id) === card.dataset.matchId);
+  if (match) {
+    openMatchTimelineModal(match);
+  }
+});
 
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
