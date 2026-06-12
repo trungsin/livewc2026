@@ -186,17 +186,20 @@ function predictionTeaser(prediction, maxLength = 120) {
 }
 
 function renderPredictionLine(match, { compact = false } = {}) {
-  if (!match?.prediction) {
+  const prediction = match?.prediction || null;
+  const aiPart = match?.aiScore ? `AI: ${match.aiScore}` : "";
+  if (!prediction && !aiPart) {
     return "";
   }
 
-  const prediction = match.prediction;
-  const teaser = predictionTeaser(prediction, compact ? 98 : 140);
+  // Nội dung đầy đủ nằm trong modal (click thẻ trận), teaser không link ra ngoài nữa.
+  const teaser = prediction ? predictionTeaser(prediction, compact ? 86 : 128) : "";
+  const text = [teaser || prediction?.title || "", aiPart].filter(Boolean).join(" · ");
   return `
-    <a class="prediction-line${compact ? " compact" : ""}" href="${escapeHtml(prediction.url || "#")}" target="_blank" rel="noreferrer">
-      <span class="prediction-kicker">Nhận định Bongdaplus</span>
-      <span class="prediction-text">${escapeHtml(teaser || prediction.title || "")}</span>
-    </a>
+    <span class="prediction-line${compact ? " compact" : ""}">
+      <span class="prediction-kicker">${prediction ? "Nhận định" : "Dự đoán AI"}</span>
+      <span class="prediction-text">${escapeHtml(text)}</span>
+    </span>
   `;
 }
 

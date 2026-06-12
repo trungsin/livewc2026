@@ -7,6 +7,7 @@ const { translateTeamNamesInText } = require("./team-names-vietnamese.js");
 const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
 const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
+const { initAiPredictionWorker, getAiPrediction } = require("./ai-match-prediction-generator.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -926,6 +927,15 @@ function translateCommentaryText(text) {
   return translated;
 }
 
+function stripPredictionAnalysis(prediction) {
+  if (!prediction) {
+    return null;
+  }
+
+  const { analysis, ...lightPrediction } = prediction;
+  return lightPrediction;
+}
+
 async function buildLivePayload(force = false) {
   const key = "live";
   const cached = cache.get(key);
@@ -956,7 +966,9 @@ async function buildLivePayload(force = false) {
   const predictionsByMatchId = await buildBongdaplusPredictions(matches);
   const matchesWithPredictions = matches.map((match) => ({
     ...match,
-    prediction: predictionsByMatchId.get(match.id) || null
+    prediction: stripPredictionAnalysis(predictionsByMatchId.get(match.id)),
+    // Chỉ nhúng tỉ số AI gọn cho teaser; nhận định đầy đủ nằm ở /api/match-insight.
+    aiScore: getAiPrediction(match.id)?.predictedScore || ""
   }));
 
   await Promise.all(matchesWithPredictions.map((match) => recordPrediction(match, { prediction: match.prediction })));
@@ -1057,6 +1069,7 @@ const server = http.createServer(async (req, res) => {
         await recordPrediction(match, cached.payload);
         sendJson(res, 200, {
           ...cached.payload,
+          aiPrediction: getAiPrediction(matchId),
           cache: { hit: true, ttlMs: 5 * 60 * 1000 - (now - cached.createdAt) }
         });
         return;
@@ -1066,6 +1079,7 @@ const server = http.createServer(async (req, res) => {
       await recordPrediction(match, insight);
       const payload = {
         ...insight,
+        aiPrediction: getAiPrediction(matchId),
         cache: { hit: false, ttlMs: 5 * 60 * 1000 }
       };
       cache.set(key, { createdAt: now, payload });
@@ -1101,6 +1115,14 @@ const server = http.createServer(async (req, res) => {
 const host = process.env.HOST || "0.0.0.0";
 
 loadLocalSquads().then(() => {
+  initAiPredictionWorker({
+    getLiveContext: async () => {
+      const payload = await buildLivePayload(false);
+      return { matches: payload.matches || [], standings: payload.standings || [] };
+    },
+    // Snapshot dự đoán AI vào tracker ngay khi sinh, không chờ người dùng mở modal.
+    onPredictionGenerated: (match, entry) => recordPrediction(match, { aiPrediction: entry })
+  });
   server.listen(port, host, () => {
     console.log(`LiveCup server listening on http://${host}:${port}`);
   });

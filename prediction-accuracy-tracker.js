@@ -93,8 +93,10 @@ async function recordPrediction(match, insight = {}) {
   const bongdaplusScore = normalizeScore(prediction?.score);
   const bongdaplusOneXTwo = oneXTwoFromScore(bongdaplusScore);
   const oddsImpliedOneXTwo = oneXTwoFromFavorite(insight.oddsImplied?.favorite);
+  const aiScore = normalizeScore(insight.aiPrediction?.predictedScore);
+  const aiOneXTwo = oneXTwoFromScore(aiScore);
 
-  if (!bongdaplusScore && !oddsImpliedOneXTwo) {
+  if (!bongdaplusScore && !oddsImpliedOneXTwo && !aiScore) {
     return;
   }
 
@@ -131,6 +133,14 @@ async function recordPrediction(match, insight = {}) {
     changed = true;
   }
 
+  if (!entry.predictions.ai && aiScore) {
+    entry.predictions.ai = {
+      score: aiScore,
+      oneXTwo: aiOneXTwo
+    };
+    changed = true;
+  }
+
   if (changed) {
     scheduleSave();
   }
@@ -159,7 +169,7 @@ async function scoreFinishedMatches(matches = []) {
       continue;
     }
 
-    const hasSnapshot = entry.predictions?.bongdaplus || entry.predictions?.oddsImplied;
+    const hasSnapshot = entry.predictions?.bongdaplus || entry.predictions?.oddsImplied || entry.predictions?.ai;
     const finalScore = actualScore(match);
     if (!hasSnapshot || !finalScore) {
       continue;
@@ -182,6 +192,10 @@ function emptyStats() {
       oneXTwo: { correct: 0, total: 0 }
     },
     oddsImplied: {
+      oneXTwo: { correct: 0, total: 0 }
+    },
+    ai: {
+      score: { correct: 0, total: 0 },
       oneXTwo: { correct: 0, total: 0 }
     }
   };
@@ -218,6 +232,20 @@ function getStats() {
       stats.oddsImplied.oneXTwo.total += 1;
       if (oddsImplied.oneXTwo === actualOneXTwo) {
         stats.oddsImplied.oneXTwo.correct += 1;
+      }
+    }
+
+    const ai = entry.predictions?.ai;
+    if (ai?.score) {
+      stats.ai.score.total += 1;
+      if (normalizeScore(ai.score) === actual) {
+        stats.ai.score.correct += 1;
+      }
+    }
+    if (ai?.oneXTwo && actualOneXTwo) {
+      stats.ai.oneXTwo.total += 1;
+      if (ai.oneXTwo === actualOneXTwo) {
+        stats.ai.oneXTwo.correct += 1;
       }
     }
   }

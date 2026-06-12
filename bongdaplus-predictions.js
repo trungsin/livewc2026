@@ -36,31 +36,48 @@ function decodeOddsHtmlEntities(value) {
     aacute: "á",
     agrave: "à",
     acirc: "â",
+    atilde: "ã",
     eacute: "é",
     egrave: "è",
     ecirc: "ê",
     iacute: "í",
     igrave: "ì",
+    itilde: "ĩ",
     oacute: "ó",
     ograve: "ò",
     ocirc: "ô",
+    otilde: "õ",
     uacute: "ú",
     ugrave: "ù",
+    utilde: "ũ",
     yacute: "ý",
+    ytilde: "ỹ",
     Aacute: "Á",
     Agrave: "À",
     Acirc: "Â",
+    Atilde: "Ã",
     Eacute: "É",
     Egrave: "È",
     Ecirc: "Ê",
     Iacute: "Í",
     Igrave: "Ì",
+    Itilde: "Ĩ",
     Oacute: "Ó",
     Ograve: "Ò",
     Ocirc: "Ô",
+    Otilde: "Õ",
     Uacute: "Ú",
     Ugrave: "Ù",
-    Yacute: "Ý"
+    Utilde: "Ũ",
+    Yacute: "Ý",
+    Ytilde: "Ỹ",
+    ndash: "-",
+    mdash: "-",
+    hellip: "…",
+    lsquo: "'",
+    rsquo: "'",
+    ldquo: "\"",
+    rdquo: "\""
   };
 
   return decodeHtmlEntities(value).replace(/&([A-Za-z]+);/g, (entity, name) => named[name] || entity);
@@ -212,6 +229,85 @@ function parseBongdaplusOdds(html) {
   }
 }
 
+const BONGDAPLUS_ANALYSIS_HEADINGS = [
+  { key: "phantichphongdo", label: "Phân tích phong độ" },
+  { key: "thongtinlucluong", label: "Thông tin lực lượng" },
+  { key: "doihinhdukien", label: "Đội hình dự kiến" },
+  { key: "phantichdulieuchuyensau", label: "Phân tích dữ liệu chuyên sâu" },
+  { key: "bongdaplusdudoantyso", label: "BONGDAPLUS dự đoán tỷ số" },
+  { key: "bongdaplusdudoantiso", label: "BONGDAPLUS dự đoán tỷ số" },
+  { key: "dudoantyso", label: "BONGDAPLUS dự đoán tỷ số" },
+  { key: "dudoantiso", label: "BONGDAPLUS dự đoán tỷ số" }
+];
+
+function normalizeBongdaplusHeading(value) {
+  const key = foldLooseText(decodeOddsHtmlEntities(stripHtmlTags(value)));
+  return BONGDAPLUS_ANALYSIS_HEADINGS.find((heading) => key.includes(heading.key)) || null;
+}
+
+function truncateAtSentenceBoundary(value, maxLength = 600) {
+  const text = collapseSpaces(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const limit = Math.max(1, maxLength - 1);
+  const slice = text.slice(0, limit);
+  const boundary = Math.max(
+    slice.lastIndexOf(". "),
+    slice.lastIndexOf("! "),
+    slice.lastIndexOf("? "),
+    slice.lastIndexOf("; ")
+  );
+  const trimmed = (boundary >= 180 ? slice.slice(0, boundary + 1) : slice).trim();
+  return `${trimmed}…`;
+}
+
+function parseBongdaplusAnalysisSections(html) {
+  try {
+    const content = extractPostContent(html);
+    if (!content) {
+      return [];
+    }
+
+    const headings = [];
+    const headingPattern = /<(h[2-4])[^>]*>[\s\S]*?<\/\1>|<strong[^>]*>[\s\S]*?<\/strong>/gi;
+    let headingMatch;
+    while ((headingMatch = headingPattern.exec(content))) {
+      const normalized = normalizeBongdaplusHeading(headingMatch[0]);
+      if (!normalized) {
+        continue;
+      }
+      headings.push({
+        index: headingMatch.index,
+        end: headingMatch.index + headingMatch[0].length,
+        heading: normalized.label
+      });
+    }
+
+    const sections = [];
+    const seen = new Set();
+    for (let index = 0; index < headings.length; index += 1) {
+      const current = headings[index];
+      if (seen.has(current.heading)) {
+        continue;
+      }
+      const next = headings[index + 1];
+      const sectionHtml = content.slice(current.end, next ? next.index : content.length);
+      const text = truncateAtSentenceBoundary(textFromHtml(sectionHtml));
+      if (!text) {
+        continue;
+      }
+      seen.add(current.heading);
+      sections.push({ heading: current.heading, text });
+    }
+
+    return sections;
+  } catch (error) {
+    return [];
+  }
+}
+
 function parseBongdaplusPredictionArticle(html, item) {
   const title = decodeHtmlEntities((String(html || "").match(/<h1>([\s\S]*?)<\/h1>/i) || [])[1] || item.title || item.listingTitle || "");
   const summary = decodeHtmlEntities(
@@ -246,7 +342,8 @@ function parseBongdaplusPredictionArticle(html, item) {
     summary,
     tip,
     score,
-    odds: parseBongdaplusOdds(html)
+    odds: parseBongdaplusOdds(html),
+    analysis: parseBongdaplusAnalysisSections(html)
   };
 }
 
@@ -316,6 +413,7 @@ async function buildBongdaplusPredictions(matches) {
 
 module.exports = {
   buildBongdaplusPredictions,
+  parseBongdaplusAnalysisSections,
   parseBongdaplusOdds,
   parseBongdaplusPredictionArticle,
   parseBongdaplusPredictionListings,

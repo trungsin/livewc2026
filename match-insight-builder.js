@@ -113,12 +113,16 @@ function hasAnyBongdaplusOdds(odds) {
   return Boolean(odds && (odds.asianHandicap || odds.europeanOdds || odds.overUnder));
 }
 
+function hasAnyBongdaplusAnalysis(analysis) {
+  return Array.isArray(analysis) && analysis.length > 0;
+}
+
 async function refreshBongdaplusPrediction(prediction) {
-  if (!prediction?.url || hasAnyBongdaplusOdds(prediction.odds)) {
+  if (!prediction?.url || hasAnyBongdaplusOdds(prediction.odds) && hasAnyBongdaplusAnalysis(prediction.analysis)) {
     return prediction || null;
   }
 
-  // Bài nhận định có thể cập nhật kèo sau cache listing, nên thử nạp tươi khi odds đang trống.
+  // Bài nhận định có thể cập nhật kèo/nhận định sau cache listing, nên thử nạp tươi khi thiếu dữ liệu.
   const article = await fetchText(`bongdaplus-article:${prediction.url}`, prediction.url);
   if (!article.ok) {
     return prediction;

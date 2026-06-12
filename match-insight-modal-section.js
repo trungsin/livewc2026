@@ -39,6 +39,18 @@ function renderInsightBadges(predictionStats) {
   ].filter(Boolean).join("");
 }
 
+function renderBongdaplusAnalysisSections(analysis) {
+  if (!Array.isArray(analysis) || !analysis.length) {
+    return "";
+  }
+  return analysis.map((section) => `
+    <div class="insight-analysis-section">
+      <h5>${escapeHtml(section.heading)}</h5>
+      <p>${escapeHtml(section.text)}</p>
+    </div>
+  `).join("");
+}
+
 function renderBongdaplusInsight(prediction, predictionStats) {
   if (!prediction) {
     return "";
@@ -47,15 +59,63 @@ function renderBongdaplusInsight(prediction, predictionStats) {
   const badges = renderInsightBadges({
     bongdaplus: predictionStats?.bongdaplus
   });
+  const analysisHtml = renderBongdaplusAnalysisSections(prediction.analysis);
   return `
     <div class="insight-source">
       <div class="insight-source-header">
         <h4>Nhận định Bongdaplus</h4>
         ${badges ? `<div class="prediction-badges">${badges}</div>` : ""}
       </div>
-      ${prediction.tip || prediction.summary || prediction.title ? `<p class="insight-tip">${escapeHtml(prediction.tip || prediction.summary || prediction.title)}</p>` : ""}
+      ${analysisHtml || (prediction.tip || prediction.summary || prediction.title ? `<p class="insight-tip">${escapeHtml(prediction.tip || prediction.summary || prediction.title)}</p>` : "")}
       ${prediction.score ? `<p class="insight-score">Dự đoán tỉ số: <strong>${escapeHtml(prediction.score)}</strong></p>` : ""}
-      ${prediction.url ? `<a class="text-link" href="${escapeHtml(prediction.url)}" target="_blank" rel="noreferrer">Bài gốc</a>` : ""}
+      <p class="insight-source-note">Nguồn: Bongdaplus</p>
+    </div>
+  `;
+}
+
+function probBarSegments(probs, match) {
+  const labels = {
+    home: match ? displayTeamName(match.home) : "Chủ nhà",
+    draw: "Hòa",
+    away: match ? displayTeamName(match.away) : "Khách"
+  };
+  return ["home", "draw", "away"].map((key) => {
+    const percent = Math.round(Number(probs?.[key] || 0) * 100);
+    return {
+      key,
+      percent,
+      label: `${labels[key]} ${percent}%`
+    };
+  }).filter((segment) => segment.percent > 0);
+}
+
+function renderAiPredictionBlock(aiPrediction, predictionStats, match) {
+  if (!aiPrediction) {
+    return "";
+  }
+
+  const badges = [
+    predictionStatsBadge(predictionStats, "ai", "oneXTwo"),
+    predictionStatsBadge(predictionStats, "ai", "score")
+  ].filter(Boolean).join("");
+  const segments = probBarSegments(aiPrediction.probs, match);
+
+  return `
+    <div class="insight-source ai-insight">
+      <div class="insight-source-header">
+        <h4>🤖 Dự đoán AI</h4>
+        ${badges ? `<div class="prediction-badges">${badges}</div>` : ""}
+      </div>
+      ${aiPrediction.analysis ? `<p class="insight-tip">${escapeHtml(aiPrediction.analysis)}</p>` : ""}
+      ${aiPrediction.predictedScore ? `<p class="insight-score">AI dự đoán tỉ số: <strong>${escapeHtml(aiPrediction.predictedScore)}</strong></p>` : ""}
+      ${segments.length ? `
+        <div class="prob-bar" role="img" aria-label="Xác suất kết quả">
+          ${segments.map((segment) => `<span class="prob-segment is-${segment.key}" style="width:${segment.percent}%" title="${escapeHtml(segment.label)}"></span>`).join("")}
+        </div>
+        <div class="prob-bar-labels">
+          ${segments.map((segment) => `<span class="prob-label is-${segment.key}">${escapeHtml(segment.label)}</span>`).join("")}
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -147,7 +207,8 @@ function renderOddsTable(insight, predictionStats) {
   `;
 }
 
-function renderInsightSection(insight, predictionStats) {
+function renderInsightSection(insight, predictionStats, match = null) {
+  const aiBlock = renderAiPredictionBlock(insight?.aiPrediction, predictionStats, match);
   const predictionBlock = renderBongdaplusInsight(insight?.prediction, predictionStats);
   const oddsBlock = renderOddsTable(insight || {}, predictionStats);
 
@@ -156,7 +217,7 @@ function renderInsightSection(insight, predictionStats) {
       <div class="insight-section-header">
         <h3>Nhận định &amp; kèo</h3>
       </div>
-      ${predictionBlock || oddsBlock ? `${predictionBlock}${oddsBlock}` : `<div class="empty-state">Chưa có dữ liệu nhận định cho trận này.</div>`}
+      ${aiBlock || predictionBlock || oddsBlock ? `${aiBlock}${predictionBlock}${oddsBlock}` : `<div class="empty-state">Chưa có dữ liệu nhận định cho trận này.</div>`}
       <p class="insight-disclaimer">Thông tin tham khảo, không phải khuyến nghị cá cược.</p>
     </section>
   `;

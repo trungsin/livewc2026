@@ -97,7 +97,7 @@ function openMatchTimelineModal(match, predictionStats = null) {
   fetchMatchInsight(match.id)
     .then((insight) => {
       if (modalMatchId === match.id) {
-        insightContainer.innerHTML = renderInsightSection(insight, predictionStats);
+        insightContainer.innerHTML = renderInsightSection(insight, predictionStats, match);
       }
     })
     .catch(() => {
