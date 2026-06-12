@@ -47,7 +47,7 @@ function matchStatus(match) {
     return "FT";
   }
 
-  return escapeHtml(match.kickoff || "Sắp đấu");
+  return escapeHtml(match.kickoffUtc ? formatKickoff(match.kickoffUtc) : (match.kickoff || "Sắp đấu"));
 }
 
 function sourceBadge(match) {

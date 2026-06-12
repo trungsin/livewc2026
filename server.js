@@ -170,8 +170,8 @@ function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new
     stadium: formatStadium(stadium) || game.stadium_name_en || game.stadium || "",
     group: game.group ? `Group ${game.group}` : "World Cup",
     type: game.type || "",
-    kickoff: game.local_date || "",
     kickoffUtc: parseWorldcup26Date(game.local_date),
+    kickoff: formatTime(parseWorldcup26Date(game.local_date)) || game.local_date || "",
     sources: ["worldcup26"],
     confidence: 0.68,
     rawIds: { worldcup26: game.id }
@@ -189,6 +189,7 @@ function formatStadium(stadium) {
 }
 
 function normalizeOpenfootballMatch(match, index) {
+  const kickoffUtc = match.date || "";
   return {
     id: `openfootball-${index}`,
     home: match.team1 || "TBD",
@@ -201,8 +202,8 @@ function normalizeOpenfootballMatch(match, index) {
     status: match.score ? "finished" : "upcoming",
     stadium: match.ground || "",
     group: match.group || match.round || "World Cup",
-    kickoff: [match.date, match.time].filter(Boolean).join(" "),
-    kickoffUtc: match.date || "",
+    kickoffUtc,
+    kickoff: formatTime(kickoffUtc) || [match.date, match.time].filter(Boolean).join(" "),
     sources: ["openfootball"],
     confidence: 0.58,
     rawIds: { openfootball: index }
