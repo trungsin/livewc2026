@@ -81,6 +81,7 @@ function openMatchTimelineModal(match) {
       </span>
     </div>
     <div class="match-meta">${escapeHtml(matchModalStatusLabel(match))} / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
+    ${renderPredictionLine(match)}
     <div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>
   `;
   modal.classList.remove("hidden");

@@ -1085,9 +1085,60 @@ input {
     grid-row: 1 / 3;
   }
 
-  .match-row-meta {
-    grid-column: 1 / -1;
-  }
+.match-row-meta {
+  grid-column: 1 / -1;
+}
+
+.prediction-line {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  text-decoration: none;
+  background: #f8fbf9;
+}
+
+.prediction-line.compact {
+  margin-top: 4px;
+  padding: 8px 0 0;
+  border-top: 0;
+  background: none;
+}
+
+.prediction-line:hover {
+  color: var(--text);
+}
+
+.prediction-kicker {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.prediction-text {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.prediction-line.compact .prediction-text {
+  font-size: 12px;
+}
+
+.match-modal .prediction-line {
+  margin: 10px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.match-modal .prediction-line.compact {
+  margin: 8px 0 0;
+}
 
   .standings-groups {
     grid-template-columns: 1fr;

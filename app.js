@@ -130,6 +130,7 @@ function renderMatches() {
         <div class="match-meta">${matchStatus(match)} / ${escapeHtml(match.group || "World Cup")}</div>
         <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
         <div class="match-meta">${sourceBadge(match)}</div>
+        ${renderPredictionLine(match, { compact: true })}
       </div>
       <div class="team">
         <span class="team-name">${escapeHtml(displayTeamName(match.away))}</span>
@@ -256,6 +257,7 @@ function renderResults() {
       </div>
       <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
       <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
+      ${renderPredictionLine(match, { compact: true })}
     </article>
   `).join("");
 }

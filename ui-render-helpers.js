@@ -160,6 +160,46 @@ function matchCenterText(match) {
   return `<span class="match-row-score">&ndash;</span>`;
 }
 
+function shortenText(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function predictionTeaser(prediction, maxLength = 120) {
+  if (!prediction) {
+    return "";
+  }
+
+  const parts = [];
+  if (prediction.tip) {
+    parts.push(prediction.tip);
+  } else if (prediction.summary) {
+    parts.push(prediction.summary);
+  }
+  if (prediction.score) {
+    parts.push(`Dự đoán: ${prediction.score}`);
+  }
+  return shortenText(parts.join(" · "), maxLength);
+}
+
+function renderPredictionLine(match, { compact = false } = {}) {
+  if (!match?.prediction) {
+    return "";
+  }
+
+  const prediction = match.prediction;
+  const teaser = predictionTeaser(prediction, compact ? 98 : 140);
+  return `
+    <a class="prediction-line${compact ? " compact" : ""}" href="${escapeHtml(prediction.url || "#")}" target="_blank" rel="noreferrer">
+      <span class="prediction-kicker">Nhận định Bongdaplus</span>
+      <span class="prediction-text">${escapeHtml(teaser || prediction.title || "")}</span>
+    </a>
+  `;
+}
+
 function renderMatchRow(match) {
   const phase = match.group && match.group !== "World Cup" ? match.group : match.type || match.group || "World Cup";
   const meta = [phase, match.stadium || ""].filter(Boolean).join(" · ");
@@ -178,6 +218,7 @@ function renderMatchRow(match) {
         ${imageTag(match.awayLogo, awayName, "team-logo")}
       </div>
       <div class="match-row-meta">${escapeHtml(meta)}</div>
+      ${renderPredictionLine(match)}
     </article>
   `;
 }
