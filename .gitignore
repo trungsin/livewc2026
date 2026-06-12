@@ -4,3 +4,9 @@
 !.dev.vars.example
 .env*
 !.env.example
+
+# planning and AI tooling artifacts
+plans/
+.claude/
+.repomixignore
+release-manifest.json
