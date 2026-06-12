@@ -1084,3 +1084,88 @@ input {
 .match-modal-card .timeline {
   padding: 12px 0 0;
 }
+
+/* Tường thuật trực tiếp kiểu bongdaplus (panel Diễn biến + modal) */
+.commentary-list {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 0 0;
+}
+
+.commentary-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.commentary-item.is-scoring {
+  border-left-color: #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.commentary-minute {
+  color: var(--accent-2);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.commentary-label {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--line);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.commentary-label.is-goal {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.commentary-label.is-yellow {
+  background: #facc15;
+  color: #1f2937;
+}
+
+.commentary-label.is-red {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.commentary-label.is-danger {
+  background: #fb923c;
+  color: #1f2937;
+}
+
+.commentary-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Tường thuật nằm trong panel Diễn biến (ol .timeline) */
+.timeline .commentary-item {
+  border-left-width: 3px;
+}
+
+.match-card.clickable {
+  cursor: pointer;
+}
+
+.match-card.clickable:hover {
+  border-color: var(--accent);
+}
+
+/* Panel diễn biến cuộn được khi tường thuật dài */
+.timeline {
+  max-height: 600px;
+  overflow-y: auto;
+}

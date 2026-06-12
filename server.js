@@ -1,6 +1,7 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { translateEspnCommentary } = require("./espn-commentary-vietnamese-translator.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -35,6 +36,7 @@ function findLocalSquad({ name = "", code = "" } = {}) {
 const SOURCE_URLS = {
   espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
   espnTeams: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams",
+  espnSummary: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary",
   worldcup26Games: "https://worldcup26.ir/get/games",
   worldcup26Groups: "https://worldcup26.ir/get/groups",
   worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
@@ -120,7 +122,7 @@ function normalizeEspnEvent(event) {
     sources: ["espn"],
     confidence: 0.86,
     rawIds: { espn: event.id },
-    details: competition.details || []
+    details: (competition.details || []).map((detail) => ({ ...detail, text: translateEspnCommentary(detail.text) }))
   };
 }
 
@@ -734,6 +736,34 @@ async function fetchJson(name, url) {
   }
 }
 
+async function buildMatchTimelinePayload(espnId) {
+  const key = `timeline-${espnId}`;
+  const cached = cache.get(key);
+  const now = Date.now();
+  // TTL 9s để client refresh 10s luôn nhận dữ liệu mới
+  if (cached && now - cached.createdAt < 9000) {
+    return { ...cached.payload, cache: { hit: true } };
+  }
+
+  const result = await fetchJson("espn-summary", `${SOURCE_URLS.espnSummary}?event=${encodeURIComponent(espnId)}`);
+  if (!result.ok) {
+    throw new Error(`espn summary: ${result.error}`);
+  }
+
+  const commentary = Array.isArray(result.data.commentary) ? result.data.commentary : [];
+  // Mới nhất lên đầu, giống trang tường thuật trực tiếp
+  const entries = commentary.map((item) => ({
+    minute: item.time?.displayValue || "",
+    type: item.play?.type?.text || "",
+    text: translateEspnCommentary(item.text),
+    scoring: Boolean(item.play?.scoringPlay)
+  })).reverse();
+
+  const payload = { generatedAt: new Date().toISOString(), espnId, entries, cache: { hit: false } };
+  cache.set(key, { createdAt: now, payload });
+  return payload;
+}
+
 async function buildLivePayload(force = false) {
   const key = "live";
   const cached = cache.get(key);
@@ -796,7 +826,8 @@ async function serveStatic(req, res) {
     const ext = path.extname(filePath).toLowerCase();
     res.writeHead(200, {
       "content-type": mimeTypes[ext] || "application/octet-stream",
-      "cache-control": ext === ".html" ? "no-store" : "public, max-age=3600"
+      // HTML không cache để ?v= cache-busting trên asset có hiệu lực ngay sau deploy
+      "cache-control": ext === ".html" ? "no-store" : "public, max-age=300"
     });
     res.end(content);
   } catch {
@@ -828,6 +859,20 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/match-timeline") {
+    const espnId = url.searchParams.get("espnId") || "";
+    if (!/^\d+$/.test(espnId)) {
+      sendJson(res, 400, { error: "espnId không hợp lệ" });
+      return;
+    }
+    try {
+      sendJson(res, 200, await buildMatchTimelinePayload(espnId));
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
     }
     return;
   }

@@ -33,31 +33,27 @@ function ensureMatchModal() {
   return matchModalElement;
 }
 
-function timelineEventItem(detail) {
-  const players = (detail.athletesInvolved || [])
-    .map((athlete) => athlete.displayName || athlete.fullName)
-    .filter(Boolean)
-    .join(", ");
-  const eventName = detail.type?.text || detail.type?.displayName || "Sự kiện";
-  const copy = detail.text || (players ? `Cầu thủ: ${players}.` : "");
+let modalMatchId = null;
 
-  return `
-    <li class="timeline-item">
-      <span class="minute">${escapeHtml(detail.clock?.displayValue || detail.displayTime || "--")}</span>
-      <div>
-        <p class="event-title">${detail.scoringPlay ? "⚽ " : ""}${escapeHtml(eventName)}</p>
-        ${copy ? `<p class="event-copy">${escapeHtml(copy)}</p>` : ""}
-      </div>
-    </li>
-  `;
+// Chuyển match.details (sự kiện chính từ scoreboard) sang shape entry của live-commentary-renderer.
+function entriesFromMatchDetails(match) {
+  return (match.details || []).map((detail) => {
+    const players = (detail.athletesInvolved || [])
+      .map((athlete) => athlete.displayName || athlete.fullName)
+      .filter(Boolean)
+      .join(", ");
+    return {
+      minute: detail.clock?.displayValue || detail.displayTime || "",
+      type: detail.type?.text || detail.type?.displayName || "",
+      text: detail.text || (players ? `Cầu thủ: ${players}.` : ""),
+      scoring: Boolean(detail.scoringPlay)
+    };
+  }).reverse();
 }
 
 function openMatchTimelineModal(match) {
   const modal = ensureMatchModal();
-  const details = match.details || [];
-  const timelineHtml = details.length
-    ? `<ul class="timeline">${details.map(timelineEventItem).join("")}</ul>`
-    : `<div class="empty-state">Chưa có dữ liệu diễn biến cho trận này.</div>`;
+  modalMatchId = match.id;
 
   modal.querySelector(".match-modal-body").innerHTML = `
     <div class="match-modal-header">
@@ -72,9 +68,30 @@ function openMatchTimelineModal(match) {
       </span>
     </div>
     <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
-    ${timelineHtml}
+    <div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>
   `;
   modal.classList.remove("hidden");
+
+  const container = modal.querySelector(".match-modal-timeline");
+  const fallbackEntries = entriesFromMatchDetails(match);
+  const espnId = match.rawIds?.espn;
+
+  if (!espnId) {
+    container.innerHTML = renderCommentaryList(fallbackEntries);
+    return;
+  }
+
+  fetchMatchTimeline(espnId)
+    .then((entries) => {
+      if (modalMatchId === match.id) {
+        container.innerHTML = renderCommentaryList(entries.length ? entries : fallbackEntries);
+      }
+    })
+    .catch(() => {
+      if (modalMatchId === match.id) {
+        container.innerHTML = renderCommentaryList(fallbackEntries);
+      }
+    });
 }
 
 function closeMatchTimelineModal() {

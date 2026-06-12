@@ -24,6 +24,7 @@ const resultsCount = document.querySelector("#results-count");
 const searchInput = document.querySelector("#search-input");
 const tabs = document.querySelectorAll(".tab");
 const timelineStatus = document.querySelector("#timeline-status");
+const timelineTitle = document.querySelector("#timeline-title");
 
 function formatClock(value = new Date()) {
   return new Intl.DateTimeFormat("vi-VN", {
@@ -117,7 +118,8 @@ function renderMatches() {
   }
 
   matchList.innerHTML = items.map((match) => `
-    <article class="match-card">
+    <article class="match-card ${match.status === "live" || match.status === "halftime" ? "clickable" : ""}"
+      ${match.status === "live" || match.status === "halftime" ? `data-live-id="${escapeHtml(match.id)}" title="Xem tường thuật trực tiếp"` : ""}>
       <div class="team">
         ${imageTag(match.homeLogo, match.home, "team-logo")}
         <span class="team-name">${escapeHtml(match.home)}</span>
@@ -136,7 +138,65 @@ function renderMatches() {
   `).join("");
 }
 
+// Tường thuật trực tiếp per-trận (kiểu bongdaplus): bám theo một trận live, click thẻ trận để đổi.
+const liveCommentary = { matchId: null, entries: [], lastFetchAt: 0 };
+
+function selectedLiveMatch() {
+  const match = matches.find((item) => item.id === liveCommentary.matchId);
+  return match && (match.status === "live" || match.status === "halftime") ? match : null;
+}
+
+function syncLiveCommentary() {
+  if (!selectedLiveMatch()) {
+    const fallback = matches.find((item) => (item.status === "live" || item.status === "halftime") && item.rawIds?.espn);
+    liveCommentary.matchId = fallback ? fallback.id : null;
+    liveCommentary.entries = [];
+  }
+  refreshLiveCommentary();
+}
+
+async function refreshLiveCommentary(force = false) {
+  const match = selectedLiveMatch();
+  const espnId = match?.rawIds?.espn;
+  if (!espnId) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - liveCommentary.lastFetchAt < 8000) {
+    return;
+  }
+  liveCommentary.lastFetchAt = now;
+  try {
+    const entries = await fetchMatchTimeline(espnId);
+    if (selectedLiveMatch()?.rawIds?.espn === espnId) {
+      liveCommentary.entries = entries;
+      renderTimeline();
+    }
+  } catch {
+    // giữ tường thuật cũ, lần poll sau thử lại
+  }
+}
+
 function renderTimeline() {
+  const liveMatch = selectedLiveMatch();
+
+  if (liveMatch) {
+    timelineTitle.textContent = `${liveMatch.home} ${liveMatch.homeScore} - ${liveMatch.awayScore} ${liveMatch.away}`;
+    timelineList.innerHTML = liveCommentary.entries.length
+      ? liveCommentary.entries.map(commentaryEntryHtml).join("")
+      : `
+        <li class="timeline-item">
+          <span class="minute">--</span>
+          <div>
+            <p class="event-title">Đang tải tường thuật…</p>
+            <p class="event-copy">Diễn biến trận đấu sẽ hiện tại đây trong giây lát.</p>
+          </div>
+        </li>
+      `;
+    return;
+  }
+
+  timelineTitle.textContent = "Diễn biến nổi bật";
   const items = [...realtimeEvents, ...timeline];
 
   if (!items.length) {
@@ -265,8 +325,21 @@ function applyPayload(payload) {
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
   trackFinishedTransitions(matches);
+  syncLiveCommentary();
   renderAll();
 }
+
+matchList.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-live-id]");
+  if (!card || card.dataset.liveId === liveCommentary.matchId) {
+    return;
+  }
+  liveCommentary.matchId = card.dataset.liveId;
+  liveCommentary.entries = [];
+  renderTimeline();
+  refreshLiveCommentary(true);
+  document.querySelector("#events")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
 
 resultsList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-match-id]");
@@ -364,3 +437,5 @@ applyPayload({
 });
 loadLiveData().then(schedulePoll);
 connectRealtime();
+// Tường thuật trực tiếp refresh mỗi 10s, độc lập với chu kỳ poll dữ liệu trận
+setInterval(() => refreshLiveCommentary(true), 10000);
