@@ -347,20 +347,24 @@ function parseBongdaplusPredictionArticle(html, item) {
   };
 }
 
+// Bongdaplus đặt tên đội lẫn lộn tiếng Việt/tiếng Anh ("Morocco" thay vì "Ma Rốc",
+// "Bosnia & Herzegovina" thay vì "Bosnia và Herzegovina") nên so cả hai biến thể.
+function teamSearchKeys(teamName) {
+  return [...new Set([foldLooseText(displayTeamName(teamName)), foldLooseText(teamName)])].filter(Boolean);
+}
+
 function matchPredictionItem(match, items) {
   const dayKey = vnDayKey(match.kickoffUtc);
   const matchDateKey = dayKey === "unknown" ? "" : dayKey.slice(5);
-  const homeName = foldLooseText(displayTeamName(match.home));
-  const awayName = foldLooseText(displayTeamName(match.away));
-  const reverseKey = `${matchDateKey}::${awayName}${homeName}`;
-  const forwardKey = `${matchDateKey}::${homeName}${awayName}`;
+  const homeKeys = teamSearchKeys(match.home);
+  const awayKeys = teamSearchKeys(match.away);
 
   return items.find((item) => {
     if (item.dateKey !== matchDateKey) {
       return false;
     }
     const key = item.searchKey;
-    return key.includes(homeName) && key.includes(awayName) || item.matchKey === forwardKey || item.matchKey === reverseKey;
+    return homeKeys.some((name) => key.includes(name)) && awayKeys.some((name) => key.includes(name));
   }) || null;
 }
 
