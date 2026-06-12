@@ -315,8 +315,11 @@ function parseBongdaplusPredictionArticle(html, item) {
     || (String(html || "").match(/<meta property="og:description" content="([^"]+)"/i) || [])[1]
     || ""
   );
-  const text = collapseSpaces(decodeHtmlEntities(stripHtmlTags(html)));
-  const sectionStart = text.indexOf("BONGDAPLUS dự đoán tỉ số");
+  // textFromHtml decode cả named entity (&aacute;...) vì bài viết chèn entity giữa từ.
+  const text = textFromHtml(html);
+  // Bài viết dùng cả hai cách viết "tỉ số"/"tỷ số".
+  const sectionHeading = text.match(/BONGDAPLUS dự đoán t[ỉỷ] số/i);
+  const sectionStart = sectionHeading ? sectionHeading.index : -1;
   let tip = summary;
   let score = "";
 
@@ -328,7 +331,7 @@ function parseBongdaplusPredictionArticle(html, item) {
     }
     const tipText = section
       .split(/Dự đoán:/i)[0]
-      .replace(/^BONGDAPLUS dự đoán tỉ số[^.]*\.?\s*/i, "")
+      .replace(/^BONGDAPLUS dự đoán t[ỉỷ] số[^.]*\.?\s*/i, "")
       .trim();
     if (tipText) {
       tip = tipText;
