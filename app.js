@@ -56,12 +56,14 @@ function sourceBadge(match) {
   return `<span class="source-badge">${escapeHtml(names)} · ${confidence}%</span>`;
 }
 
+function kickoffTimestamp(match) {
+  const parsed = Date.parse(match.kickoffUtc || "");
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
 function filteredMatches() {
   const query = searchInput.value.trim().toLowerCase();
-  return homeMatches().filter((match) => {
-    const filterMatch = activeFilter === "all"
-      || match.status === activeFilter
-      || (activeFilter === "live" && match.status === "halftime");
+  return homeMatchesForActiveTab().filter((match) => {
     const text = [
       match.home,
       match.away,
@@ -70,12 +72,31 @@ function filteredMatches() {
       match.stadium,
       match.group
     ].join(" ").toLowerCase();
-    return filterMatch && text.includes(query);
+    return text.includes(query);
   });
 }
 
-function homeMatches() {
+function homeMatchesForActiveTab() {
   const today = vnDayKey(new Date());
+
+  if (activeFilter === "finished") {
+    return matches
+      .filter((match) => match.status === "finished")
+      .sort((a, b) => kickoffTimestamp(b) - kickoffTimestamp(a));
+  }
+
+  if (activeFilter === "upcoming") {
+    return matches
+      .filter((match) => match.status === "upcoming" && vnDayKey(match.kickoffUtc) === today)
+      .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
+  }
+
+  if (activeFilter === "live") {
+    return matches
+      .filter((match) => match.status === "live" || match.status === "halftime")
+      .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
+  }
+
   return matches.filter((match) => {
     const isLive = match.status === "live" || match.status === "halftime";
     if (isLive) {
@@ -92,7 +113,7 @@ function renderMatches() {
   const items = filteredMatches();
 
   if (!items.length) {
-    matchList.innerHTML = `<div class="empty-state">Hôm nay không có trận phù hợp - <a class="text-link" href="./matches.html">xem lịch đầy đủ</a>.</div>`;
+    matchList.innerHTML = `<div class="empty-state">Không có trận phù hợp - <a class="text-link" href="./matches.html">xem lịch đầy đủ</a>.</div>`;
     return;
   }
 
