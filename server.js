@@ -804,7 +804,7 @@ function buildStandings(matches, groupsFromApi, teamsById = new Map()) {
         return computed
           ? { ...computed, team: name }
           : { team: name, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 };
-      }).sort(sortStandingRows);
+      });
 
       if (rows.length) {
         groups.push({ group: normalizeGroupLetter(group.name) || String(group.name || ""), rows });

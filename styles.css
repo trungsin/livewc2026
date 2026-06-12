@@ -646,34 +646,6 @@ input {
   line-height: 1.45;
 }
 
-.standings {
-  width: calc(100% - 36px);
-  margin: 0 18px 18px;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.standings.compact {
-  width: 100%;
-  margin: 0;
-}
-
-.standings th,
-.standings td {
-  padding: 12px 8px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-}
-
-.standings th:not(:first-child),
-.standings td:not(:first-child) {
-  text-align: center;
-}
-
-.standings tbody tr:last-child td {
-  border-bottom: 0;
-}
-
 .standings-groups {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -681,7 +653,7 @@ input {
   padding: 0 18px 18px;
 }
 
-.group-table {
+.standing-group {
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--line);
@@ -689,9 +661,99 @@ input {
   background: var(--surface-2);
 }
 
-.group-table h3 {
-  margin: 0 0 10px;
+.standing-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.standing-group-head h3 {
+  margin: 0;
   font-size: 17px;
+}
+
+.standing-group-count {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #e3f2ec;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.standing-group-body {
+  display: grid;
+  gap: 8px;
+}
+
+.standing-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.standing-team {
+  display: grid;
+  grid-template-columns: 28px 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.standing-rank {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #eef4f1;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.standing-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+.standing-logo.placeholder {
+  display: grid;
+  place-items: center;
+  background: #eaf0f4;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.standing-team strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.standing-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.standing-meta strong {
+  color: var(--text);
 }
 
 .schedule-card {
@@ -1025,6 +1087,20 @@ input {
 
   .match-row-meta {
     grid-column: 1 / -1;
+  }
+
+  .standings-groups {
+    grid-template-columns: 1fr;
+    padding: 0 14px 14px;
+  }
+
+  .standing-row {
+    grid-template-columns: 1fr;
+  }
+
+  .standing-meta {
+    justify-content: space-between;
+    white-space: normal;
   }
 }
 

@@ -715,47 +715,92 @@ function stageLabelForMatch(match) {
 }
 
 function buildStandings(matches, groupsFromApi) {
-  if (Array.isArray(groupsFromApi) && groupsFromApi.length) {
-    const rows = [];
-    for (const group of groupsFromApi) {
-      for (const team of group.teams || []) {
-        rows.push({
-          team: team.team_name_en || team.name_en || team.team_id || "TBD",
-          played: Number(team.mp || team.played || 0),
-          diff: Number(team.gd || (Number(team.gf || 0) - Number(team.ga || 0))),
-          points: Number(team.pts || team.points || 0)
-        });
-      }
-    }
-    if (rows.length) {
-      return rows.slice(0, 12);
-    }
-  }
-
-  const table = new Map();
+  const statsByTeam = new Map();
+  const groupTeamKeys = new Map();
   const completed = matches.filter((match) => match.status === "finished");
   for (const match of completed) {
-    ensureTeam(table, match.home);
-    ensureTeam(table, match.away);
-    applyResult(table.get(match.home), match.homeScore, match.awayScore);
-    applyResult(table.get(match.away), match.awayScore, match.homeScore);
+    const groupLetter = normalizeGroupLetter(match.group);
+    if (!groupLetter) {
+      continue;
+    }
+    recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, match.home, match.homeScore, match.awayScore);
+    recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, match.away, match.awayScore, match.homeScore);
   }
 
-  return [...table.values()]
-    .sort((a, b) => b.points - a.points || b.diff - a.diff)
-    .slice(0, 12);
+  if (Array.isArray(groupsFromApi) && groupsFromApi.length) {
+    const groups = [];
+    for (const group of groupsFromApi) {
+      const rows = (group.teams || []).map((team) => {
+        const name = team.team_name_en || team.name_en || team.team_id || "TBD";
+        const computed = statsByTeam.get(canonicalTeamName(name));
+        return computed
+          ? { ...computed, team: name }
+          : {
+              team: name,
+              played: Number(team.mp || team.played || 0),
+              won: Number(team.w || team.won || 0),
+              drawn: Number(team.d || team.drawn || 0),
+              lost: Number(team.l || team.lost || 0),
+              diff: Number(team.gd || (Number(team.gf || 0) - Number(team.ga || 0))),
+              points: Number(team.pts || team.points || 0)
+            };
+      });
+
+      if (rows.length) {
+        groups.push({ group: normalizeGroupLetter(group.name) || String(group.name || ""), rows });
+      }
+    }
+    if (groups.length) {
+      return groups.sort((a, b) => a.group.localeCompare(b.group));
+    }
+  }
+
+  return [...groupTeamKeys.entries()]
+    .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+    .map(([group, teamKeys]) => ({
+      group,
+      rows: [...teamKeys].map((key) => statsByTeam.get(key)).sort(sortStandingRows)
+    }));
 }
 
-function ensureTeam(table, team) {
-  if (!table.has(team)) {
-    table.set(team, { team, played: 0, diff: 0, points: 0 });
+function recordTeamResult(statsByTeam, groupTeamKeys, groupLetter, teamName, goalsFor, goalsAgainst) {
+  const key = canonicalTeamName(teamName);
+  if (!statsByTeam.has(key)) {
+    statsByTeam.set(key, { team: teamName, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 });
   }
+  applyResult(statsByTeam.get(key), goalsFor, goalsAgainst);
+  if (!groupTeamKeys.has(groupLetter)) {
+    groupTeamKeys.set(groupLetter, new Set());
+  }
+  groupTeamKeys.get(groupLetter).add(key);
+}
+
+function normalizeGroupLetter(value) {
+  const match = String(value || "").trim().match(/^(?:group\s*)?([A-L])$/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function sortStandingRows(a, b) {
+  return b.points - a.points || b.diff - a.diff || a.team.localeCompare(b.team);
 }
 
 function applyResult(row, goalsFor, goalsAgainst) {
+  goalsFor = Number(goalsFor || 0);
+  goalsAgainst = Number(goalsAgainst || 0);
   row.played += 1;
+  row.won += 0;
+  row.drawn += 0;
+  row.lost += 0;
   row.diff += goalsFor - goalsAgainst;
-  row.points += goalsFor > goalsAgainst ? 3 : goalsFor === goalsAgainst ? 1 : 0;
+  if (goalsFor > goalsAgainst) {
+    row.won += 1;
+    row.points += 3;
+  } else if (goalsFor === goalsAgainst) {
+    row.drawn += 1;
+    row.points += 1;
+  } else {
+    row.lost += 1;
+  }
 }
 
 async function fetchJson(name, url) {

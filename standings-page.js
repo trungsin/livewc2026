@@ -3,35 +3,32 @@ const standingsCount = document.querySelector("#standings-count");
 
 function renderStandingsGroup(group) {
   const rows = Array.isArray(group.rows) ? group.rows : [];
+
   return `
-    <article class="group-table">
-      <h3>Bảng ${escapeHtml(group.group || "")}</h3>
-      <table class="standings compact">
-        <thead>
-          <tr>
-            <th>Đội</th>
-            <th>Tr</th>
-            <th>T</th>
-            <th>H</th>
-            <th>B</th>
-            <th>HS</th>
-            <th>Đ</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map((row) => `
-            <tr>
-              <td><strong>${escapeHtml(displayTeamName(row.team))}</strong></td>
-              <td>${escapeHtml(row.played)}</td>
-              <td>${escapeHtml(row.won)}</td>
-              <td>${escapeHtml(row.drawn)}</td>
-              <td>${escapeHtml(row.lost)}</td>
-              <td>${escapeHtml(row.diff)}</td>
-              <td><strong>${escapeHtml(row.points)}</strong></td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
+    <article class="standing-group">
+      <div class="standing-group-head">
+        <h3>Bảng ${escapeHtml(group.group || "")}</h3>
+        <span class="standing-group-count">${rows.length} đội</span>
+      </div>
+      <div class="standing-group-body">
+        ${rows.map((row, index) => `
+          <div class="standing-row">
+            <div class="standing-team">
+              <span class="standing-rank">${index + 1}</span>
+              ${imageTag(row.logo || row.flag, displayTeamName(row.team), "standing-logo")}
+              <strong>${escapeHtml(displayTeamName(row.team))}</strong>
+            </div>
+            <div class="standing-meta" title="Trận · Thắng · Hòa · Thua · Hiệu số · Điểm">
+              <span>${escapeHtml(row.played)}</span>
+              <span>${escapeHtml(row.won)}</span>
+              <span>${escapeHtml(row.drawn)}</span>
+              <span>${escapeHtml(row.lost)}</span>
+              <span>${escapeHtml(row.diff > 0 ? `+${row.diff}` : row.diff)}</span>
+              <strong>${escapeHtml(row.points)}đ</strong>
+            </div>
+          </div>
+        `).join("")}
+      </div>
     </article>
   `;
 }
