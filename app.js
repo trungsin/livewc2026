@@ -74,36 +74,8 @@ function filteredMatches() {
   });
 }
 
-// Trận FT chỉ ở lại khu live ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở Kết quả mới nhất).
-const FT_LINGER_MS = 10 * 60 * 1000;
-// Khi không bắt được khoảnh khắc FT (mở trang sau khi trận đã xong), ước lượng từ giờ bóng lăn:
-// 90' + nghỉ giữa hiệp + bù giờ ≈ 120', cộng 10 phút hiển thị.
-const FT_LINGER_FROM_KICKOFF_MS = 130 * 60 * 1000;
-const ftSeenAt = new Map();
-const lastStatusById = new Map();
-
-function trackFinishedTransitions(list) {
-  const now = Date.now();
-  for (const match of list) {
-    const previous = lastStatusById.get(match.id);
-    if (match.status === "finished" && previous && previous !== "finished" && !ftSeenAt.has(match.id)) {
-      ftSeenAt.set(match.id, now);
-    }
-    lastStatusById.set(match.id, match.status);
-  }
-}
-
-function finishedStillInLiveSection(match, now) {
-  if (ftSeenAt.has(match.id)) {
-    return now - ftSeenAt.get(match.id) < FT_LINGER_MS;
-  }
-  const kickoff = Date.parse(match.kickoffUtc || "");
-  return !Number.isNaN(kickoff) && now - kickoff < FT_LINGER_FROM_KICKOFF_MS;
-}
-
 function homeMatches() {
   const today = vnDayKey(new Date());
-  const now = Date.now();
   return matches.filter((match) => {
     const isLive = match.status === "live" || match.status === "halftime";
     if (isLive) {
@@ -112,7 +84,7 @@ function homeMatches() {
     if (vnDayKey(match.kickoffUtc) !== today) {
       return false;
     }
-    return match.status === "finished" ? finishedStillInLiveSection(match, now) : true;
+    return match.status === "upcoming";
   });
 }
 
@@ -332,7 +304,6 @@ function applyPayload(payload) {
   lastPayload = payload;
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
-  trackFinishedTransitions(matches);
   syncLiveCommentary();
   renderAll();
 }

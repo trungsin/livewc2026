@@ -151,6 +151,7 @@ function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new
   const timeElapsed = String(game.time_elapsed || "").toLowerCase();
   const status = finished ? "finished" : (timeElapsed !== "notstarted" && timeElapsed !== "" ? "live" : "upcoming");
 
+  const kickoffUtc = parseWorldcup26Date(game.local_date, stadium);
   return {
     id: `wc26-${game.id}`,
     home,
@@ -170,8 +171,8 @@ function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new
     stadium: formatStadium(stadium) || game.stadium_name_en || game.stadium || "",
     group: game.group ? `Group ${game.group}` : "World Cup",
     type: game.type || "",
-    kickoffUtc: parseWorldcup26Date(game.local_date),
-    kickoff: formatTime(parseWorldcup26Date(game.local_date)) || game.local_date || "",
+    kickoffUtc,
+    kickoff: formatTime(kickoffUtc) || game.local_date || "",
     sources: ["worldcup26"],
     confidence: 0.68,
     rawIds: { worldcup26: game.id }
@@ -189,7 +190,7 @@ function formatStadium(stadium) {
 }
 
 function normalizeOpenfootballMatch(match, index) {
-  const kickoffUtc = match.date || "";
+  const kickoffUtc = parseOpenfootballDateTime(match.date, match.time);
   return {
     id: `openfootball-${index}`,
     home: match.team1 || "TBD",
@@ -232,13 +233,102 @@ function formatTime(isoValue) {
   }
 }
 
-function parseWorldcup26Date(value) {
+function parseWorldcup26Date(value, stadium = null) {
   if (!value) {
     return "";
   }
 
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
+  const parsed = parseWorldcup26LocalTime(value, stadium);
+  if (parsed) {
+    return parsed;
+  }
+
+  const fallback = Date.parse(value);
+  return Number.isNaN(fallback) ? value : new Date(fallback).toISOString();
+}
+
+function parseWorldcup26LocalTime(value, stadium) {
+  const matched = String(value || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!matched) {
+    return "";
+  }
+
+  const [, month, day, year, hour, minute] = matched;
+  const timeZone = timeZoneForStadium(stadium);
+  if (!timeZone) {
+    return "";
+  }
+
+  const utcGuess = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+  const parts = Object.fromEntries(dtf.formatToParts(new Date(utcGuess)).map((part) => [part.type, part.value]));
+  const zonedAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  );
+  const offsetMs = zonedAsUtc - utcGuess;
+  return new Date(utcGuess - offsetMs).toISOString();
+}
+
+function timeZoneForStadium(stadium) {
+  const city = String(stadium?.city_en || "").toLowerCase();
+  const fifaName = String(stadium?.fifa_name || "").toLowerCase();
+  const combined = `${city} ${fifaName}`;
+
+  const zones = [
+    [/mexico city/, "America/Mexico_City"],
+    [/monterrey/, "America/Monterrey"],
+    [/guadalajara/, "America/Mexico_City"],
+    [/vancouver/, "America/Vancouver"],
+    [/seattle/, "America/Los_Angeles"],
+    [/san francisco bay area/, "America/Los_Angeles"],
+    [/san francisco/, "America/Los_Angeles"],
+    [/los angeles/, "America/Los_Angeles"],
+    [/houston/, "America/Chicago"],
+    [/dallas/, "America/Chicago"],
+    [/kansas city/, "America/Chicago"],
+    [/atlanta/, "America/New_York"],
+    [/miami/, "America/New_York"],
+    [/boston/, "America/New_York"],
+    [/philadelphia/, "America/New_York"],
+    [/new york\/new jersey/, "America/New_York"],
+    [/toronto/, "America/Toronto"]
+  ];
+
+  for (const [pattern, zone] of zones) {
+    if (pattern.test(combined)) {
+      return zone;
+    }
+  }
+
+  return "";
+}
+
+function parseOpenfootballDateTime(dateValue, timeValue) {
+  const dateMatch = String(dateValue || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = String(timeValue || "").trim().match(/^(\d{2}):(\d{2})(?:\s+UTC([+-]\d{1,2}))?$/i);
+  if (!dateMatch || !timeMatch) {
+    return "";
+  }
+
+  const [, year, month, day] = dateMatch;
+  const [, hour, minute, offsetText] = timeMatch;
+  const offsetHours = offsetText ? Number(offsetText) : 0;
+  const utcMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), 0) - (offsetHours * 60 * 60 * 1000);
+  return new Date(utcMs).toISOString();
 }
 
 function teamPairKey(match) {
