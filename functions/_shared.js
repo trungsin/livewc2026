@@ -3,6 +3,7 @@
 
 export const SOURCE_URLS = {
   espn: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200",
+  espnSummary: "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary",
   worldcup26Games: "https://worldcup26.ir/get/games",
   worldcup26Groups: "https://worldcup26.ir/get/groups",
   worldcup26Stadiums: "https://worldcup26.ir/get/stadiums",
@@ -227,12 +228,17 @@ function parseWorldcup26Date(value) {
   return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
 }
 
-function matchKey(match) {
+function teamPairKey(match) {
   const teams = [match.home, match.away]
     .map((name) => canonicalTeamName(name))
     .sort()
     .join("-");
   return teams;
+}
+
+function matchTimeMs(match) {
+  const parsed = Date.parse(match.kickoffUtc || "");
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 function canonicalTeamName(name) {
@@ -248,48 +254,93 @@ function canonicalTeamName(name) {
   return aliases[compact] || compact;
 }
 
+function sourcePriority(match) {
+  const sources = match.sources || [];
+  if (sources.includes("espn")) return 3;
+  if (sources.includes("worldcup26")) return 2;
+  if (sources.includes("openfootball")) return 1;
+  return 0;
+}
+
+function shouldMergeMatch(existing, incoming) {
+  if (teamPairKey(existing) !== teamPairKey(incoming)) {
+    return false;
+  }
+
+  const existingTime = matchTimeMs(existing);
+  const incomingTime = matchTimeMs(incoming);
+  if (existingTime === null || incomingTime === null) {
+    return true;
+  }
+
+  return Math.abs(existingTime - incomingTime) <= 36 * 60 * 60 * 1000;
+}
+
+function mergeMatchInto(existing, incoming) {
+  const incomingWins = sourcePriority(incoming) > sourcePriority(existing);
+
+  existing.sources = Array.from(new Set([...(existing.sources || []), ...(incoming.sources || [])]));
+  existing.confidence = Math.min(0.98, Math.max(existing.confidence || 0, incoming.confidence || 0) + 0.08);
+  existing.rawIds = { ...(existing.rawIds || {}), ...(incoming.rawIds || {}) };
+  existing.homeLogo = existing.homeLogo || incoming.homeLogo || "";
+  existing.awayLogo = existing.awayLogo || incoming.awayLogo || "";
+  existing.homeTeamId = existing.homeTeamId || incoming.homeTeamId || "";
+  existing.awayTeamId = existing.awayTeamId || incoming.awayTeamId || "";
+  existing.homeWorldcup26Id = existing.homeWorldcup26Id || incoming.homeWorldcup26Id || "";
+  existing.awayWorldcup26Id = existing.awayWorldcup26Id || incoming.awayWorldcup26Id || "";
+
+  if (incomingWins) {
+    Object.assign(existing, {
+      id: incoming.id,
+      home: incoming.home,
+      away: incoming.away,
+      homeCode: incoming.homeCode || existing.homeCode,
+      awayCode: incoming.awayCode || existing.awayCode,
+      homeScore: incoming.homeScore,
+      awayScore: incoming.awayScore,
+      minute: incoming.minute,
+      status: incoming.status,
+      kickoff: incoming.kickoff,
+      kickoffUtc: incoming.kickoffUtc,
+      details: incoming.details || existing.details || []
+    });
+  } else if (existing.status === "upcoming" && incoming.status !== "upcoming") {
+    Object.assign(existing, {
+      homeScore: incoming.homeScore,
+      awayScore: incoming.awayScore,
+      minute: incoming.minute,
+      status: incoming.status
+    });
+  }
+
+  if (!existing.stadium && incoming.stadium) {
+    existing.stadium = incoming.stadium;
+  }
+  if (incoming.group && (!existing.group || existing.group === "World Cup" || existing.group === "Group stage")) {
+    existing.group = incoming.group;
+  }
+  if (!existing.type && incoming.type) {
+    existing.type = incoming.type;
+  }
+}
+
 function mergeMatches(sourceLists) {
-  const byKey = new Map();
+  const merged = [];
 
   for (const sourceList of sourceLists) {
     for (const match of sourceList) {
-      const key = matchKey(match);
-      const existing = byKey.get(key);
+      const existing = merged.find((item) => shouldMergeMatch(item, match));
 
       if (!existing) {
-        byKey.set(key, match);
+        merged.push(match);
         continue;
       }
 
-      existing.sources = Array.from(new Set([...(existing.sources || []), ...(match.sources || [])]));
-      existing.confidence = Math.min(0.98, Math.max(existing.confidence || 0, match.confidence || 0) + 0.08);
-      existing.rawIds = { ...(existing.rawIds || {}), ...(match.rawIds || {}) };
-      existing.homeLogo = existing.homeLogo || match.homeLogo || "";
-      existing.awayLogo = existing.awayLogo || match.awayLogo || "";
-      existing.homeTeamId = existing.homeTeamId || match.homeTeamId || "";
-      existing.awayTeamId = existing.awayTeamId || match.awayTeamId || "";
-      existing.homeWorldcup26Id = existing.homeWorldcup26Id || match.homeWorldcup26Id || "";
-      existing.awayWorldcup26Id = existing.awayWorldcup26Id || match.awayWorldcup26Id || "";
-
-      if (existing.status === "upcoming" && match.status !== "upcoming") {
-        Object.assign(existing, {
-          homeScore: match.homeScore,
-          awayScore: match.awayScore,
-          minute: match.minute,
-          status: match.status
-        });
-      }
-
-      if (!existing.stadium && match.stadium) {
-        existing.stadium = match.stadium;
-      }
-      if (!existing.group && match.group) {
-        existing.group = match.group;
-      }
+      mergeMatchInto(existing, match);
     }
   }
 
-  return [...byKey.values()].sort((a, b) => {
+  return merged.sort((a, b) => {
     const dateA = Date.parse(a.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
     const dateB = Date.parse(b.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
     return dateA - dateB;
@@ -657,6 +708,28 @@ export async function buildLivePayload() {
     events: buildEvents(matches),
     standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : []),
     schedule: buildSchedule(matches)
+  };
+}
+
+export async function buildMatchTimelinePayload(espnId) {
+  const result = await fetchJson("espn-summary", `${SOURCE_URLS.espnSummary}?event=${encodeURIComponent(espnId)}`);
+  if (!result.ok) {
+    throw new Error(`espn summary: ${result.error}`);
+  }
+
+  const commentary = Array.isArray(result.data.commentary) ? result.data.commentary : [];
+  const entries = commentary.map((item) => ({
+    minute: item.time?.displayValue || "",
+    type: item.play?.type?.text || "",
+    text: item.text || "",
+    scoring: Boolean(item.play?.scoringPlay)
+  })).reverse();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    espnId,
+    entries,
+    cache: { hit: false }
   };
 }
 

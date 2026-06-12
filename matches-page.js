@@ -93,4 +93,15 @@ pageTabs.forEach((tab) => {
   });
 });
 
+matchesContainer.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-match-id]");
+  if (!row) {
+    return;
+  }
+  const match = matches.find((item) => String(item.id) === row.dataset.matchId);
+  if (match) {
+    openMatchTimelineModal(match);
+  }
+});
+
 loadMatches().then(schedulePoll);

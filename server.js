@@ -1,7 +1,9 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { translateEspnCommentary } = require("./espn-commentary-vietnamese-translator.js");
+const { translateEspnCommentary, looksUntranslated, logUntranslated } = require("./espn-commentary-vietnamese-translator.js");
+const { translateViaCache } = require("./gemini-commentary-translation-fallback.js");
+const { translateTeamNamesInText } = require("./team-names-vietnamese.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -122,7 +124,7 @@ function normalizeEspnEvent(event) {
     sources: ["espn"],
     confidence: 0.86,
     rawIds: { espn: event.id },
-    details: (competition.details || []).map((detail) => ({ ...detail, text: translateEspnCommentary(detail.text) }))
+    details: (competition.details || []).map((detail) => ({ ...detail, text: translateCommentaryText(detail.text) }))
   };
 }
 
@@ -238,12 +240,17 @@ function parseWorldcup26Date(value) {
   return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
 }
 
-function matchKey(match) {
+function teamPairKey(match) {
   const teams = [match.home, match.away]
     .map((name) => canonicalTeamName(name))
     .sort()
     .join("-");
   return teams;
+}
+
+function matchTimeMs(match) {
+  const parsed = Date.parse(match.kickoffUtc || "");
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 function canonicalTeamName(name) {
@@ -259,49 +266,94 @@ function canonicalTeamName(name) {
   return aliases[compact] || compact;
 }
 
+function sourcePriority(match) {
+  const sources = match.sources || [];
+  if (sources.includes("espn")) return 3;
+  if (sources.includes("worldcup26")) return 2;
+  if (sources.includes("openfootball")) return 1;
+  return 0;
+}
+
+function shouldMergeMatch(existing, incoming) {
+  if (teamPairKey(existing) !== teamPairKey(incoming)) {
+    return false;
+  }
+
+  const existingTime = matchTimeMs(existing);
+  const incomingTime = matchTimeMs(incoming);
+  if (existingTime === null || incomingTime === null) {
+    return true;
+  }
+
+  return Math.abs(existingTime - incomingTime) <= 36 * 60 * 60 * 1000;
+}
+
+function mergeMatchInto(existing, incoming) {
+  const incomingWins = sourcePriority(incoming) > sourcePriority(existing);
+
+  existing.sources = Array.from(new Set([...(existing.sources || []), ...(incoming.sources || [])]));
+  existing.confidence = Math.min(0.98, Math.max(existing.confidence || 0, incoming.confidence || 0) + 0.08);
+  existing.rawIds = { ...(existing.rawIds || {}), ...(incoming.rawIds || {}) };
+  existing.homeLogo = existing.homeLogo || incoming.homeLogo || "";
+  existing.awayLogo = existing.awayLogo || incoming.awayLogo || "";
+  existing.homeTeamId = existing.homeTeamId || incoming.homeTeamId || "";
+  existing.awayTeamId = existing.awayTeamId || incoming.awayTeamId || "";
+  existing.homeWorldcup26Id = existing.homeWorldcup26Id || incoming.homeWorldcup26Id || "";
+  existing.awayWorldcup26Id = existing.awayWorldcup26Id || incoming.awayWorldcup26Id || "";
+
+  if (incomingWins) {
+    Object.assign(existing, {
+      id: incoming.id,
+      home: incoming.home,
+      away: incoming.away,
+      homeCode: incoming.homeCode || existing.homeCode,
+      awayCode: incoming.awayCode || existing.awayCode,
+      homeScore: incoming.homeScore,
+      awayScore: incoming.awayScore,
+      minute: incoming.minute,
+      status: incoming.status,
+      kickoff: incoming.kickoff,
+      kickoffUtc: incoming.kickoffUtc,
+      details: incoming.details || existing.details || []
+    });
+  } else if (existing.status === "upcoming" && incoming.status !== "upcoming") {
+    Object.assign(existing, {
+      homeScore: incoming.homeScore,
+      awayScore: incoming.awayScore,
+      minute: incoming.minute,
+      status: incoming.status
+    });
+  }
+
+  if (!existing.stadium && incoming.stadium) {
+    existing.stadium = incoming.stadium;
+  }
+  // ESPN chỉ trả "Group stage" chung chung; ưu tiên nguồn có chữ bảng cụ thể (Group A-L)
+  if (incoming.group && (!existing.group || (!normalizeGroupLetter(existing.group) && normalizeGroupLetter(incoming.group)))) {
+    existing.group = incoming.group;
+  }
+  if (!existing.type && incoming.type) {
+    existing.type = incoming.type;
+  }
+}
+
 function mergeMatches(sourceLists) {
-  const byKey = new Map();
+  const merged = [];
 
   for (const sourceList of sourceLists) {
     for (const match of sourceList) {
-      const key = matchKey(match);
-      const existing = byKey.get(key);
+      const existing = merged.find((item) => shouldMergeMatch(item, match));
 
       if (!existing) {
-        byKey.set(key, match);
+        merged.push(match);
         continue;
       }
 
-      existing.sources = Array.from(new Set([...(existing.sources || []), ...(match.sources || [])]));
-      existing.confidence = Math.min(0.98, Math.max(existing.confidence || 0, match.confidence || 0) + 0.08);
-      existing.rawIds = { ...(existing.rawIds || {}), ...(match.rawIds || {}) };
-      existing.homeLogo = existing.homeLogo || match.homeLogo || "";
-      existing.awayLogo = existing.awayLogo || match.awayLogo || "";
-      existing.homeTeamId = existing.homeTeamId || match.homeTeamId || "";
-      existing.awayTeamId = existing.awayTeamId || match.awayTeamId || "";
-      existing.homeWorldcup26Id = existing.homeWorldcup26Id || match.homeWorldcup26Id || "";
-      existing.awayWorldcup26Id = existing.awayWorldcup26Id || match.awayWorldcup26Id || "";
-
-      if (existing.status === "upcoming" && match.status !== "upcoming") {
-        Object.assign(existing, {
-          homeScore: match.homeScore,
-          awayScore: match.awayScore,
-          minute: match.minute,
-          status: match.status
-        });
-      }
-
-      if (!existing.stadium && match.stadium) {
-        existing.stadium = match.stadium;
-      }
-      // ESPN chỉ trả "Group stage" chung chung; ưu tiên nguồn có chữ bảng cụ thể (Group A-L)
-      if (match.group && (!existing.group || (!normalizeGroupLetter(existing.group) && normalizeGroupLetter(match.group)))) {
-        existing.group = match.group;
-      }
+      mergeMatchInto(existing, match);
     }
   }
 
-  return [...byKey.values()].sort((a, b) => {
+  return merged.sort((a, b) => {
     const dateA = Date.parse(a.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
     const dateB = Date.parse(b.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
     return dateA - dateB;
@@ -755,13 +807,29 @@ async function buildMatchTimelinePayload(espnId) {
   const entries = commentary.map((item) => ({
     minute: item.time?.displayValue || "",
     type: item.play?.type?.text || "",
-    text: translateEspnCommentary(item.text),
+    text: translateCommentaryText(item.text),
     scoring: Boolean(item.play?.scoringPlay)
   })).reverse();
 
   const payload = { generatedAt: new Date().toISOString(), espnId, entries, cache: { hit: false } };
   cache.set(key, { createdAt: now, payload });
   return payload;
+}
+
+function translateCommentaryText(text) {
+  const source = String(text || "");
+  const translated = translateEspnCommentary(source);
+  if (!looksUntranslated(translated)) {
+    return translated;
+  }
+
+  const cached = translateViaCache(source);
+  if (cached) {
+    return translateTeamNamesInText(cached);
+  }
+
+  logUntranslated(source);
+  return translated;
 }
 
 async function buildLivePayload(force = false) {

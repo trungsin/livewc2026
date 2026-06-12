@@ -21,7 +21,7 @@ function renderStandingsGroup(group) {
         <tbody>
           ${rows.map((row) => `
             <tr>
-              <td><strong>${escapeHtml(row.team)}</strong></td>
+              <td><strong>${escapeHtml(displayTeamName(row.team))}</strong></td>
               <td>${escapeHtml(row.played)}</td>
               <td>${escapeHtml(row.won)}</td>
               <td>${escapeHtml(row.drawn)}</td>

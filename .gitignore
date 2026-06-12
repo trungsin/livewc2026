@@ -10,3 +10,5 @@ plans/
 .claude/
 .repomixignore
 release-manifest.json
+logs/
+data/commentary-translation-cache.json

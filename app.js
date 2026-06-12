@@ -62,7 +62,14 @@ function filteredMatches() {
     const filterMatch = activeFilter === "all"
       || match.status === activeFilter
       || (activeFilter === "live" && match.status === "halftime");
-    const text = `${match.home} ${match.away} ${match.stadium} ${match.group}`.toLowerCase();
+    const text = [
+      match.home,
+      match.away,
+      displayTeamName(match.home),
+      displayTeamName(match.away),
+      match.stadium,
+      match.group
+    ].join(" ").toLowerCase();
     return filterMatch && text.includes(query);
   });
 }
@@ -118,11 +125,12 @@ function renderMatches() {
   }
 
   matchList.innerHTML = items.map((match) => `
-    <article class="match-card ${match.status === "live" || match.status === "halftime" ? "clickable" : ""}"
-      ${match.status === "live" || match.status === "halftime" ? `data-live-id="${escapeHtml(match.id)}" title="Xem tường thuật trực tiếp"` : ""}>
+    <article class="match-card clickable"
+      data-match-id="${escapeHtml(match.id)}"
+      ${match.status === "live" || match.status === "halftime" ? `data-live-id="${escapeHtml(match.id)}" title="Xem tường thuật trực tiếp"` : `title="Xem diễn biến trận đấu"`}>
       <div class="team">
-        ${imageTag(match.homeLogo, match.home, "team-logo")}
-        <span class="team-name">${escapeHtml(match.home)}</span>
+        ${imageTag(match.homeLogo, displayTeamName(match.home), "team-logo")}
+        <span class="team-name">${escapeHtml(displayTeamName(match.home))}</span>
       </div>
       <div class="score-block">
         <div class="score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</div>
@@ -131,8 +139,8 @@ function renderMatches() {
         <div class="match-meta">${sourceBadge(match)}</div>
       </div>
       <div class="team">
-        <span class="team-name">${escapeHtml(match.away)}</span>
-        ${imageTag(match.awayLogo, match.away, "team-logo")}
+        <span class="team-name">${escapeHtml(displayTeamName(match.away))}</span>
+        ${imageTag(match.awayLogo, displayTeamName(match.away), "team-logo")}
       </div>
     </article>
   `).join("");
@@ -181,7 +189,7 @@ function renderTimeline() {
   const liveMatch = selectedLiveMatch();
 
   if (liveMatch) {
-    timelineTitle.textContent = `${liveMatch.home} ${liveMatch.homeScore} - ${liveMatch.awayScore} ${liveMatch.away}`;
+    timelineTitle.textContent = `${displayTeamName(liveMatch.home)} ${liveMatch.homeScore} - ${liveMatch.awayScore} ${displayTeamName(liveMatch.away)}`;
     timelineList.innerHTML = liveCommentary.entries.length
       ? liveCommentary.entries.map(commentaryEntryHtml).join("")
       : `
@@ -216,8 +224,8 @@ function renderTimeline() {
     <li class="timeline-item">
       <span class="minute">${escapeHtml(event.minute || "--")}</span>
       <div>
-        <p class="event-title">${escapeHtml(event.title)}</p>
-        <p class="event-copy">${escapeHtml(event.copy)}</p>
+        <p class="event-title">${escapeHtml(translateTeamNamesInText(event.title))}</p>
+        <p class="event-copy">${escapeHtml(translateTeamNamesInText(event.copy))}</p>
       </div>
     </li>
   `).join("");
@@ -244,13 +252,13 @@ function renderResults() {
     <article class="result-card clickable" data-match-id="${escapeHtml(match.id)}" title="Xem diễn biến trận đấu">
       <div class="result-teams">
         <span class="result-team">
-          ${imageTag(match.homeLogo, match.home, "team-logo")}
-          <span class="team-name">${escapeHtml(match.home)}</span>
+          ${imageTag(match.homeLogo, displayTeamName(match.home), "team-logo")}
+          <span class="team-name">${escapeHtml(displayTeamName(match.home))}</span>
         </span>
         <span class="result-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span>
         <span class="result-team away">
-          <span class="team-name">${escapeHtml(match.away)}</span>
-          ${imageTag(match.awayLogo, match.away, "team-logo")}
+          <span class="team-name">${escapeHtml(displayTeamName(match.away))}</span>
+          ${imageTag(match.awayLogo, displayTeamName(match.away), "team-logo")}
         </span>
       </div>
       <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
@@ -331,7 +339,11 @@ function applyPayload(payload) {
 
 matchList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-live-id]");
-  if (!card || card.dataset.liveId === liveCommentary.matchId) {
+  if (!card) {
+    return;
+  }
+  if (card.dataset.liveId === liveCommentary.matchId) {
+    document.querySelector("#events")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     return;
   }
   liveCommentary.matchId = card.dataset.liveId;
@@ -341,12 +353,34 @@ matchList.addEventListener("click", (event) => {
   document.querySelector("#events")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
+matchList.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-match-id]:not([data-live-id])");
+  if (!card) {
+    return;
+  }
+  const match = matches.find((item) => String(item.id) === card.dataset.matchId);
+  if (match) {
+    openMatchTimelineModal(match);
+  }
+});
+
 resultsList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-match-id]");
   if (!card) {
     return;
   }
   const match = matches.find((item) => String(item.id) === card.dataset.matchId);
+  if (match) {
+    openMatchTimelineModal(match);
+  }
+});
+
+scheduleList.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-match-id]");
+  if (!row) {
+    return;
+  }
+  const match = matches.find((item) => String(item.id) === row.dataset.matchId);
   if (match) {
     openMatchTimelineModal(match);
   }

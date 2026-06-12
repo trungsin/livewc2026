@@ -108,6 +108,10 @@ function matchTime(match) {
   }).format(new Date(match.kickoffUtc));
 }
 
+function matchClickableAttributes(match) {
+  return `data-match-id="${escapeHtml(match.id)}" title="Xem diễn biến trận đấu"`;
+}
+
 function matchCenterText(match) {
   if (match.status === "finished") {
     return `<span class="match-row-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span><span class="match-row-state">FT</span>`;
@@ -124,17 +128,19 @@ function matchCenterText(match) {
 function renderMatchRow(match) {
   const phase = match.group && match.group !== "World Cup" ? match.group : match.type || match.group || "World Cup";
   const meta = [phase, match.stadium || ""].filter(Boolean).join(" · ");
+  const homeName = displayTeamName(match.home);
+  const awayName = displayTeamName(match.away);
   return `
-    <article class="match-row ${match.status === "live" || match.status === "halftime" ? "is-live" : ""}">
+    <article class="match-row clickable ${match.status === "live" || match.status === "halftime" ? "is-live" : ""}" ${matchClickableAttributes(match)}>
       <div class="match-row-time">${escapeHtml(matchTime(match))}</div>
       <div class="match-row-team">
-        ${imageTag(match.homeLogo, match.home, "team-logo")}
-        <span class="team-name">${escapeHtml(match.home)}</span>
+        ${imageTag(match.homeLogo, homeName, "team-logo")}
+        <span class="team-name">${escapeHtml(homeName)}</span>
       </div>
       <div class="match-row-center">${matchCenterText(match)}</div>
       <div class="match-row-team away">
-        <span class="team-name">${escapeHtml(match.away)}</span>
-        ${imageTag(match.awayLogo, match.away, "team-logo")}
+        <span class="team-name">${escapeHtml(awayName)}</span>
+        ${imageTag(match.awayLogo, awayName, "team-logo")}
       </div>
       <div class="match-row-meta">${escapeHtml(meta)}</div>
     </article>

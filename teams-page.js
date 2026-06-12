@@ -27,9 +27,9 @@ function renderTeams() {
 
   teamGrid.innerHTML = teams.map((team) => `
     <button class="team-card ${selectedTeamId === team.id ? "active" : ""}" type="button" data-team-id="${escapeHtml(team.id)}">
-      ${imageTag(team.logo || team.flag, team.name, "team-card-logo")}
+      ${imageTag(team.logo || team.flag, displayTeamName(team.name), "team-card-logo")}
       <span>
-        <strong>${escapeHtml(team.name)}</strong>
+        <strong>${escapeHtml(displayTeamName(team.name))}</strong>
         <small>${escapeHtml(team.code || "N/A")} / ${escapeHtml(team.group || "World Cup")}</small>
       </span>
     </button>
@@ -48,7 +48,7 @@ function renderTeams() {
 async function loadTeamDetail(team) {
   selectedTeamId = team.id;
   renderTeams();
-  teamDetail.innerHTML = `<div class="empty-state">Đang tải danh sách cầu thủ ${escapeHtml(team.name)}...</div>`;
+  teamDetail.innerHTML = `<div class="empty-state">Đang tải danh sách cầu thủ ${escapeHtml(displayTeamName(team.name))}...</div>`;
 
   try {
     const params = new URLSearchParams();
@@ -80,9 +80,9 @@ function renderTeamDetail(team, payload) {
 
   teamDetail.innerHTML = `
     <div class="team-detail-header">
-      ${imageTag(logo, team.name, "team-detail-logo")}
+      ${imageTag(logo, displayTeamName(team.name), "team-detail-logo")}
       <div>
-        <h3>${escapeHtml(detailTeam.name || team.name)}</h3>
+        <h3>${escapeHtml(displayTeamName(detailTeam.name || team.name))}</h3>
         <p>${escapeHtml(team.code || detailTeam.code || "")} / ${escapeHtml(detailTeam.group || team.group || "World Cup")}${ranking ? ` / FIFA #${escapeHtml(ranking)}` : ""}</p>
         <p>${escapeHtml(detailTeam.standingSummary || detailTeam.recordSummary || "Đội hình chính thức từ dữ liệu public, ảnh cầu thủ từ ESPN.")}</p>
       </div>

@@ -51,6 +51,19 @@ function entriesFromMatchDetails(match) {
   }).reverse();
 }
 
+function matchModalStatusLabel(match) {
+  if (match.status === "finished") {
+    return "FT";
+  }
+  if (match.status === "live") {
+    return `${match.minute || "--"}' LIVE`;
+  }
+  if (match.status === "halftime") {
+    return "Nghỉ giữa hiệp";
+  }
+  return "Sắp đấu";
+}
+
 function openMatchTimelineModal(match) {
   const modal = ensureMatchModal();
   modalMatchId = match.id;
@@ -58,16 +71,16 @@ function openMatchTimelineModal(match) {
   modal.querySelector(".match-modal-body").innerHTML = `
     <div class="match-modal-header">
       <span class="result-team">
-        ${imageTag(match.homeLogo, match.home, "team-logo")}
-        <span class="team-name">${escapeHtml(match.home)}</span>
+        ${imageTag(match.homeLogo, displayTeamName(match.home), "team-logo")}
+        <span class="team-name">${escapeHtml(displayTeamName(match.home))}</span>
       </span>
       <span class="result-score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</span>
       <span class="result-team away">
-        <span class="team-name">${escapeHtml(match.away)}</span>
-        ${imageTag(match.awayLogo, match.away, "team-logo")}
+        <span class="team-name">${escapeHtml(displayTeamName(match.away))}</span>
+        ${imageTag(match.awayLogo, displayTeamName(match.away), "team-logo")}
       </span>
     </div>
-    <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
+    <div class="match-meta">${escapeHtml(matchModalStatusLabel(match))} / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
     <div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>
   `;
   modal.classList.remove("hidden");
