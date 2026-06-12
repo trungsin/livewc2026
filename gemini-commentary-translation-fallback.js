@@ -4,6 +4,8 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const cachePath = path.join(__dirname, "data", "commentary-translation-cache.json");
+// Bản lite: quota ngày cao, đủ tốt cho dịch câu ngắn.
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const cache = new Map();
 const pending = new Set();
 let loaded = false;
@@ -92,7 +94,7 @@ async function requestGemini(sentences) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
       method: "POST",
       signal: controller.signal,
       headers: { "content-type": "application/json" },

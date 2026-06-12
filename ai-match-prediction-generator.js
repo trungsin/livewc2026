@@ -7,6 +7,7 @@ const { displayTeamName } = require("./team-names-vietnamese.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
 
 const storePath = path.join(__dirname, "data", "ai-predictions.json");
+const GEMINI_MODEL = "gemini-2.5-flash";
 const KICKOFF_WINDOW_MS = 48 * 60 * 60 * 1000;
 const CYCLE_MS = 30 * 60 * 1000;
 const MAX_PER_CYCLE = 3;
@@ -189,7 +190,7 @@ async function generateForMatch(match, context) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
       method: "POST",
       signal: controller.signal,
       headers: { "content-type": "application/json" },
@@ -210,7 +211,7 @@ async function generateForMatch(match, context) {
     }
     return {
       ...validated,
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       generatedAt: new Date().toISOString()
     };
   } catch {
