@@ -1,6 +1,6 @@
 let matches = [];
 let timeline = [];
-let activeFilter = "all";
+let activeFilter = "live";
 let lastPayload = null;
 let realtimeSocket = null;
 let realtimeConnected = false;
@@ -76,7 +76,9 @@ function filteredMatches() {
   });
 }
 
-// Trận FT chỉ ở lại tab "Tất cả" ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở tab Kết quả).
+// Tab "Sắp đấu" chỉ hiện trận bóng lăn trong vòng 5 giờ tới.
+const UPCOMING_WINDOW_MS = 5 * 60 * 60 * 1000;
+// Trận FT chỉ ở lại tab "Đang đấu" ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở tab Kết quả).
 const FT_LINGER_MS = 10 * 60 * 1000;
 // Khi không bắt được khoảnh khắc FT (mở trang sau khi trận đã xong), ước lượng từ giờ bóng lăn:
 // 90' + nghỉ giữa hiệp + bù giờ ≈ 120', cộng 10 phút hiển thị.
@@ -104,7 +106,7 @@ function finishedStillInLiveSection(match, now) {
 }
 
 function homeMatchesForActiveTab() {
-  const today = vnDayKey(new Date());
+  const now = Date.now();
 
   if (activeFilter === "finished") {
     return matches
@@ -114,30 +116,15 @@ function homeMatchesForActiveTab() {
 
   if (activeFilter === "upcoming") {
     return matches
-      .filter((match) => match.status === "upcoming" && vnDayKey(match.kickoffUtc) === today)
+      .filter((match) => match.status === "upcoming" && kickoffTimestamp(match) - now <= UPCOMING_WINDOW_MS)
       .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
   }
 
-  if (activeFilter === "live") {
-    return matches
-      .filter((match) => match.status === "live" || match.status === "halftime")
-      .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
-  }
-
-  const now = Date.now();
-  return matches.filter((match) => {
-    const isLive = match.status === "live" || match.status === "halftime";
-    if (isLive) {
-      return true;
-    }
-    if (vnDayKey(match.kickoffUtc) !== today) {
-      return false;
-    }
-    if (match.status === "finished") {
-      return finishedStillInLiveSection(match, now);
-    }
-    return match.status === "upcoming";
-  });
+  // Mặc định tab "Đang đấu": trận đang diễn ra + trận vừa mãn cuộc còn neo lại ít phút.
+  return matches
+    .filter((match) => match.status === "live" || match.status === "halftime"
+      || (match.status === "finished" && finishedStillInLiveSection(match, now)))
+    .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
 }
 
 function renderMatches() {
