@@ -138,11 +138,11 @@ function teamLogo(team) {
 }
 
 function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new Map()) {
-  const home = game.home_team_name_en || game.home_team_label || `Team ${game.home_team_id || ""}`.trim();
-  const away = game.away_team_name_en || game.away_team_label || `Team ${game.away_team_id || ""}`.trim();
   const stadium = stadiumsById.get(String(game.stadium_id));
   const homeTeam = teamsById.get(String(game.home_team_id));
   const awayTeam = teamsById.get(String(game.away_team_id));
+  const home = game.home_team_name_en || game.home_team_label || homeTeam?.name_en || `Team ${game.home_team_id || ""}`.trim();
+  const away = game.away_team_name_en || game.away_team_label || awayTeam?.name_en || `Team ${game.away_team_id || ""}`.trim();
   const finished = String(game.finished).toLowerCase() === "true";
   const timeElapsed = String(game.time_elapsed || "").toLowerCase();
   const status = finished ? "finished" : (timeElapsed !== "notstarted" && timeElapsed !== "" ? "live" : "upcoming");
@@ -165,6 +165,7 @@ function normalizeWorldcup26Game(game, stadiumsById = new Map(), teamsById = new
     status,
     stadium: formatStadium(stadium) || game.stadium_name_en || game.stadium || "",
     group: game.group ? `Group ${game.group}` : "World Cup",
+    type: game.type || "",
     kickoff: game.local_date || "",
     kickoffUtc: parseWorldcup26Date(game.local_date),
     sources: ["worldcup26"],
@@ -631,82 +632,90 @@ function buildEvents(matches) {
     }));
 }
 
-function formatScheduleTime(isoValue) {
-  if (!isoValue) {
-    return "";
-  }
-  try {
-    return new Intl.DateTimeFormat("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      day: "2-digit",
-      month: "2-digit",
-      timeZone: "Asia/Ho_Chi_Minh"
-    }).format(new Date(isoValue));
-  } catch {
-    return "";
-  }
-}
-
-function buildSchedule(matches) {
-  return matches
-    .filter((match) => match.status === "upcoming")
-    .sort((a, b) => {
-      const dateA = Date.parse(a.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
-      const dateB = Date.parse(b.kickoffUtc || "") || Number.MAX_SAFE_INTEGER;
-      return dateA - dateB;
-    })
-    .slice(0, 8)
-    .map((match) => ({
-      time: formatScheduleTime(match.kickoffUtc) || match.kickoff || "--",
-      kickoffUtc: match.kickoffUtc || "",
-      title: `${match.home} vs ${match.away}`,
-      stadium: match.stadium || "Chưa rõ sân"
-    }));
-}
-
-function buildStandings(matches, groupsFromApi) {
+function buildStandings(matches, groupsFromApi, teamsById = new Map()) {
   if (Array.isArray(groupsFromApi) && groupsFromApi.length) {
-    const rows = [];
+    const groups = [];
     for (const group of groupsFromApi) {
-      for (const team of group.teams || []) {
-        rows.push({
-          team: team.team_name_en || team.name_en || team.team_id || "TBD",
-          played: Number(team.mp || team.played || 0),
+      const rows = (group.teams || []).map((team) => {
+        const sourceTeam = teamsById.get(String(team.team_id));
+        const won = Number(team.w || team.won || 0);
+        const drawn = Number(team.d || team.drawn || 0);
+        const lost = Number(team.l || team.lost || 0);
+        return {
+          team: sourceTeam?.name_en || team.name_en || `Team ${team.team_id || ""}`.trim(),
+          // upstream sometimes updates w/d/l/pts before mp; derive played when mp lags
+          played: Math.max(Number(team.mp || team.played || 0), won + drawn + lost),
+          won,
+          drawn,
+          lost,
           diff: Number(team.gd || (Number(team.gf || 0) - Number(team.ga || 0))),
           points: Number(team.pts || team.points || 0)
-        });
+        };
+      }).sort(sortStandingRows);
+
+      if (rows.length) {
+        groups.push({ group: normalizeGroupLetter(group.name) || String(group.name || ""), rows });
       }
     }
-    if (rows.length) {
-      return rows.slice(0, 12);
+    if (groups.length) {
+      return groups.sort((a, b) => a.group.localeCompare(b.group));
     }
   }
 
-  const table = new Map();
+  const groups = new Map();
   const completed = matches.filter((match) => match.status === "finished");
   for (const match of completed) {
+    const groupLetter = normalizeGroupLetter(match.group);
+    if (!groupLetter) {
+      continue;
+    }
+    if (!groups.has(groupLetter)) {
+      groups.set(groupLetter, new Map());
+    }
+    const table = groups.get(groupLetter);
     ensureTeam(table, match.home);
     ensureTeam(table, match.away);
     applyResult(table.get(match.home), match.homeScore, match.awayScore);
     applyResult(table.get(match.away), match.awayScore, match.homeScore);
   }
 
-  return [...table.values()]
-    .sort((a, b) => b.points - a.points || b.diff - a.diff)
-    .slice(0, 12);
+  return [...groups.entries()]
+    .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+    .map(([group, table]) => ({
+      group,
+      rows: [...table.values()].sort(sortStandingRows)
+    }));
+}
+
+function normalizeGroupLetter(value) {
+  const match = String(value || "").trim().match(/^(?:group\s*)?([A-L])$/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function sortStandingRows(a, b) {
+  return b.points - a.points || b.diff - a.diff || a.team.localeCompare(b.team);
 }
 
 function ensureTeam(table, team) {
   if (!table.has(team)) {
-    table.set(team, { team, played: 0, diff: 0, points: 0 });
+    table.set(team, { team, played: 0, won: 0, drawn: 0, lost: 0, diff: 0, points: 0 });
   }
 }
 
 function applyResult(row, goalsFor, goalsAgainst) {
+  goalsFor = Number(goalsFor || 0);
+  goalsAgainst = Number(goalsAgainst || 0);
   row.played += 1;
   row.diff += goalsFor - goalsAgainst;
-  row.points += goalsFor > goalsAgainst ? 3 : goalsFor === goalsAgainst ? 1 : 0;
+  if (goalsFor > goalsAgainst) {
+    row.won += 1;
+    row.points += 3;
+  } else if (goalsFor === goalsAgainst) {
+    row.drawn += 1;
+    row.points += 1;
+  } else {
+    row.lost += 1;
+  }
 }
 
 async function fetchJson(name, url) {
@@ -767,8 +776,7 @@ async function buildLivePayload(force = false) {
     matches,
     teams: buildTeams(matches, teamList),
     events: buildEvents(matches),
-    standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : []),
-    schedule: buildSchedule(matches)
+    standings: buildStandings(matches, wcGroups.ok ? (wcGroups.data.groups || wcGroups.data || []) : [], teamsById)
   };
 
   cache.set(key, { createdAt: now, payload });

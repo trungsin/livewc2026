@@ -1,7 +1,5 @@
 let matches = [];
 let timeline = [];
-let standings = [];
-let schedule = [];
 let activeFilter = "all";
 let lastPayload = null;
 let realtimeSocket = null;
@@ -15,13 +13,11 @@ const fallbackPayload = {
   sources: [{ name: "fallback", ok: true, label: "Dữ liệu dự phòng cục bộ" }],
   matches: [],
   events: [],
-  standings: [],
-  schedule: []
+  standings: []
 };
 
 const matchList = document.querySelector("#match-list");
 const timelineList = document.querySelector("#timeline-list");
-const standingsBody = document.querySelector("#standings-body");
 const scheduleList = document.querySelector("#schedule-list");
 const resultsList = document.querySelector("#results-list");
 const resultsCount = document.querySelector("#results-count");
@@ -52,7 +48,7 @@ function matchStatus(match) {
     return "FT";
   }
 
-  return match.kickoff || "Sắp đấu";
+  return escapeHtml(match.kickoff || "Sắp đấu");
 }
 
 function sourceBadge(match) {
@@ -63,10 +59,20 @@ function sourceBadge(match) {
 
 function filteredMatches() {
   const query = searchInput.value.trim().toLowerCase();
-  return matches.filter((match) => {
-    const filterMatch = activeFilter === "all" || match.status === activeFilter;
+  return homeMatches().filter((match) => {
+    const filterMatch = activeFilter === "all"
+      || match.status === activeFilter
+      || (activeFilter === "live" && match.status === "halftime");
     const text = `${match.home} ${match.away} ${match.stadium} ${match.group}`.toLowerCase();
     return filterMatch && text.includes(query);
+  });
+}
+
+function homeMatches() {
+  const today = vnDayKey(new Date());
+  return matches.filter((match) => {
+    const isLive = match.status === "live" || match.status === "halftime";
+    return isLive || vnDayKey(match.kickoffUtc) === today;
   });
 }
 
@@ -74,7 +80,7 @@ function renderMatches() {
   const items = filteredMatches();
 
   if (!items.length) {
-    matchList.innerHTML = `<div class="empty-state">Không có trận phù hợp với bộ lọc hiện tại.</div>`;
+    matchList.innerHTML = `<div class="empty-state">Hôm nay không có trận phù hợp - <a class="text-link" href="./matches.html">xem lịch đầy đủ</a>.</div>`;
     return;
   }
 
@@ -125,26 +131,6 @@ function renderTimeline() {
   `).join("");
 }
 
-function renderStandings() {
-  if (!standings.length) {
-    standingsBody.innerHTML = `
-      <tr>
-        <td colspan="4">Bảng xếp hạng sẽ tự tính khi có kết quả đã hoàn tất.</td>
-      </tr>
-    `;
-    return;
-  }
-
-  standingsBody.innerHTML = standings.map((row) => `
-    <tr>
-      <td><strong>${escapeHtml(row.team)}</strong></td>
-      <td>${escapeHtml(row.played)}</td>
-      <td>${escapeHtml(row.diff)}</td>
-      <td><strong>${escapeHtml(row.points)}</strong></td>
-    </tr>
-  `).join("");
-}
-
 function kickoffTimestamp(match) {
   const parsed = Date.parse(match.kickoffUtc || "");
   return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
@@ -162,7 +148,7 @@ function renderResults() {
     return;
   }
 
-  resultsList.innerHTML = finished.map((match) => `
+  resultsList.innerHTML = finished.slice(0, 6).map((match) => `
     <article class="result-card">
       <div class="result-teams">
         <span class="result-team">
@@ -182,34 +168,34 @@ function renderResults() {
 }
 
 function renderSchedule() {
-  const items = schedule.length ? schedule : matches
+  const today = vnDayKey(new Date());
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = vnDayKey(tomorrowDate);
+  const items = matches
     .filter((match) => match.status === "upcoming")
-    .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b))
-    .slice(0, 8)
-    .map((match) => ({
-      time: formatKickoff(match.kickoffUtc) || match.kickoff || "--",
-      title: `${match.home} vs ${match.away}`,
-      stadium: match.stadium || "Chưa rõ sân"
-    }));
+    .filter((match) => {
+      const day = vnDayKey(match.kickoffUtc);
+      return day === today || day === tomorrow;
+    });
 
   if (!items.length) {
-    scheduleList.innerHTML = `<div class="empty-state">Chưa có lịch sắp tới từ các nguồn miễn phí.</div>`;
+    scheduleList.innerHTML = `<div class="empty-state">Không có trận trong 2 ngày tới - <a class="text-link" href="./matches.html">xem lịch đầy đủ</a>.</div>`;
     return;
   }
 
-  scheduleList.innerHTML = items.map((item) => `
-    <article class="schedule-card">
-      <div class="schedule-time">${escapeHtml(item.time)}</div>
-      <div>
-        <strong>${escapeHtml(item.title)}</strong>
-        <span>${escapeHtml(item.stadium)}</span>
+  scheduleList.innerHTML = groupMatchesByDay(items).map((group) => `
+    <section class="day-group compact">
+      <h3 class="day-heading">${escapeHtml(group.heading)}</h3>
+      <div class="day-matches">
+        ${group.matches.map(renderMatchRow).join("")}
       </div>
-    </article>
+    </section>
   `).join("");
 }
 
 function updateMetrics() {
-  document.querySelector("#live-count").textContent = matches.filter((match) => match.status === "live").length;
+  document.querySelector("#live-count").textContent = matches.filter((match) => match.status === "live" || match.status === "halftime").length;
   document.querySelector("#event-count").textContent = realtimeEvents.length + timeline.length;
   document.querySelector("#last-sync").textContent = lastPayload?.generatedAt ? formatClock(lastPayload.generatedAt) : formatClock();
 
@@ -220,14 +206,13 @@ function updateMetrics() {
     : "Không lấy được nguồn ngoài, đang dùng dữ liệu dự phòng.";
   timelineStatus.textContent = realtimeConnected
     ? "Realtime"
-    : matches.some((match) => match.status === "live") ? "Live feed" : "Theo dõi";
+    : matches.some((match) => match.status === "live" || match.status === "halftime") ? "Live feed" : "Theo dõi";
 }
 
 function renderAll() {
   renderMatches();
   renderTimeline();
   renderResults();
-  renderStandings();
   renderSchedule();
   updateMetrics();
 }
@@ -252,8 +237,6 @@ function applyPayload(payload) {
   lastPayload = payload;
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
-  standings = Array.isArray(payload.standings) ? payload.standings : [];
-  schedule = Array.isArray(payload.schedule) ? payload.schedule : [];
   renderAll();
 }
 

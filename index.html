@@ -12,17 +12,16 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Điều hướng">
-        <a class="brand" href="#" aria-label="LiveCup">
+        <a class="brand" href="./index.html" aria-label="LiveCup">
           <span class="brand-mark">LC</span>
           <span>LiveCup</span>
         </a>
         <nav class="nav-list">
-          <a class="nav-item active" href="#live">Live</a>
-          <a class="nav-item" href="#events">Diễn biến</a>
-          <a class="nav-item" href="#results">Kết quả</a>
-          <a class="nav-item" href="#standings">Bảng đấu</a>
-          <a class="nav-item" href="#schedule">Lịch đấu</a>
+          <a class="nav-item active" href="./index.html">Live</a>
+          <a class="nav-item" href="./matches.html">Lịch & KQ</a>
+          <a class="nav-item" href="./standings.html">BXH</a>
           <a class="nav-item" href="./teams.html">Đội tuyển</a>
+          <a class="nav-item" href="#events">Diễn biến</a>
         </nav>
         <div class="source-box">
           <span class="source-label">Nguồn dữ liệu</span>
@@ -100,40 +99,22 @@
           <div class="panel-header">
             <div>
               <span class="section-kicker">Full time</span>
-              <h2 id="results-title">Kết quả trận đấu</h2>
+              <h2 id="results-title">Kết quả mới nhất</h2>
             </div>
-            <span class="pill" id="results-count">0 trận</span>
+            <a class="panel-link" href="./matches.html?tab=results">Xem tất cả &rarr;</a>
           </div>
+          <div class="panel-subline"><span class="pill" id="results-count">0 trận</span></div>
           <div class="results-list" id="results-list"></div>
         </section>
 
         <section class="lower-grid">
-          <section class="panel standings-panel" id="standings" aria-labelledby="standings-title">
-            <div class="panel-header">
-              <div>
-                <span class="section-kicker">World Cup</span>
-                <h2 id="standings-title">Bảng xếp hạng</h2>
-              </div>
-            </div>
-            <table class="standings">
-              <thead>
-                <tr>
-                  <th>Đội</th>
-                  <th>Trận</th>
-                  <th>HS</th>
-                  <th>Điểm</th>
-                </tr>
-              </thead>
-              <tbody id="standings-body"></tbody>
-            </table>
-          </section>
-
           <section class="panel schedule-panel" id="schedule" aria-labelledby="schedule-title">
             <div class="panel-header">
               <div>
                 <span class="section-kicker">Next</span>
-                <h2 id="schedule-title">Lịch sắp tới</h2>
+                <h2 id="schedule-title">Lịch 2 ngày tới</h2>
               </div>
+              <a class="panel-link" href="./matches.html">Xem lịch đầy đủ &rarr;</a>
             </div>
             <div class="schedule-list" id="schedule-list"></div>
           </section>
