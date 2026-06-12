@@ -14,3 +14,4 @@ logs/
 data/commentary-translation-cache.json
 data/prediction-tracking.json
 data/ai-predictions.json
+data/match-stats.json

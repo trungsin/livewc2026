@@ -213,6 +213,54 @@ function predictionStatsBadge(stats, source, metric = "oneXTwo") {
   return `<span class="prediction-badge">Đúng ${escapeHtml(value.correct)}/${escapeHtml(value.total)} trận (${escapeHtml(label)})</span>`;
 }
 
+function scorerText(scorer) {
+  const note = scorer.note ? ` (${scorer.note})` : "";
+  return `${scorer.name} ${scorer.minute}${note}`;
+}
+
+function renderScorerLines(match) {
+  const scorers = match?.stats?.scorers || [];
+  if (!scorers.length) {
+    return "";
+  }
+  return ["home", "away"].map((side) => {
+    const names = scorers.filter((scorer) => scorer.side === side).map(scorerText);
+    if (!names.length) {
+      return "";
+    }
+    const team = displayTeamName(side === "home" ? match.home : match.away);
+    return `<span class="match-scorers">⚽ ${escapeHtml(`${names.join(", ")} (${team})`)}</span>`;
+  }).filter(Boolean).join("");
+}
+
+function renderCompactStatsLine(match) {
+  const stats = match?.stats?.stats || null;
+  if (!stats) {
+    return "";
+  }
+  const parts = [];
+  if (stats.possession) {
+    parts.push(`Cầm bóng ${Math.round(Number(stats.possession[0]) || 0)}%-${Math.round(Number(stats.possession[1]) || 0)}%`);
+  }
+  if (stats.shots) {
+    parts.push(`Sút ${stats.shots[0]}-${stats.shots[1]}`);
+  }
+  const cardText = (side) => `🟨${stats.yellow?.[side] ?? 0}${Number(stats.red?.[side]) ? `🟥${stats.red[side]}` : ""}`;
+  if (stats.yellow || stats.red) {
+    parts.push(`Thẻ ${cardText(0)}-${cardText(1)}`);
+  }
+  return parts.length ? `<span class="match-stats-line">${escapeHtml(parts.join(" · "))}</span>` : "";
+}
+
+// Khối ghi bàn + thông số gọn dưới thẻ/hàng trận đã xong; thiếu dữ liệu thì ẩn sạch.
+function renderFinishedStatsLines(match) {
+  if (match?.status !== "finished" || !match?.stats) {
+    return "";
+  }
+  const html = renderScorerLines(match) + renderCompactStatsLine(match);
+  return html ? `<div class="match-finished-stats">${html}</div>` : "";
+}
+
 function renderMatchRow(match) {
   const phase = match.group && match.group !== "World Cup" ? match.group : match.type || match.group || "World Cup";
   const meta = [phase, match.stadium || ""].filter(Boolean).join(" · ");
@@ -231,6 +279,7 @@ function renderMatchRow(match) {
         ${imageTag(match.awayLogo, awayName, "team-logo")}
       </div>
       <div class="match-row-meta">${escapeHtml(meta)}</div>
+      ${renderFinishedStatsLines(match)}
       ${renderPredictionLine(match)}
     </article>
   `;

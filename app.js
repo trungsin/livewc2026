@@ -50,12 +50,6 @@ function matchStatus(match) {
   return escapeHtml(match.kickoffUtc ? formatKickoff(match.kickoffUtc) : (match.kickoff || "Sắp đấu"));
 }
 
-function sourceBadge(match) {
-  const names = (match.sources || []).join(" + ") || "unknown";
-  const confidence = Math.round((match.confidence || 0) * 100);
-  return `<span class="source-badge">${escapeHtml(names)} · ${confidence}%</span>`;
-}
-
 function kickoffTimestamp(match) {
   const parsed = Date.parse(match.kickoffUtc || "");
   return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
@@ -148,7 +142,7 @@ function renderMatches() {
         <div class="score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</div>
         <div class="match-meta">${matchStatus(match)} / ${escapeHtml(match.group || "World Cup")}</div>
         <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
-        <div class="match-meta">${sourceBadge(match)}</div>
+        ${renderFinishedStatsLines(match)}
         ${renderPredictionLine(match, { compact: true })}
       </div>
       <div class="team">
@@ -276,6 +270,7 @@ function renderResults() {
       </div>
       <div class="match-meta">FT / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
       <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
+      ${renderFinishedStatsLines(match)}
       ${renderPredictionLine(match, { compact: true })}
     </article>
   `).join("");

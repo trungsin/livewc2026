@@ -13,6 +13,7 @@ const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
 const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
 const { initAiPredictionWorker, getAiPrediction } = require("./ai-match-prediction-generator.js");
+const { initMatchStatsWorker, getMatchStats } = require("./espn-match-stats.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -783,7 +784,7 @@ function buildEvents(matches) {
     .map((match) => ({
       minute: match.status === "finished" ? "FT" : `${match.minute || "--"}'`,
       title: `${match.home} ${match.homeScore} - ${match.awayScore} ${match.away}`,
-      copy: `Nguồn: ${(match.sources || []).join(" + ")}. Độ tin cậy ${Math.round((match.confidence || 0) * 100)}%.`
+      copy: [match.group && match.group !== "World Cup" ? match.group : "", match.stadium || ""].filter(Boolean).join(" · ") || "World Cup 2026"
     }));
 }
 
@@ -973,7 +974,9 @@ async function buildLivePayload(force = false) {
     ...match,
     prediction: stripPredictionAnalysis(predictionsByMatchId.get(match.id)),
     // Chỉ nhúng tỉ số AI gọn cho teaser; nhận định đầy đủ nằm ở /api/match-insight.
-    aiScore: getAiPrediction(match.id)?.predictedScore || ""
+    aiScore: getAiPrediction(match.id)?.predictedScore || "",
+    // Thông số trận đã xong (ghi bàn, cầm bóng, thẻ...) — null khi chưa fetch được.
+    stats: match.status === "finished" ? getMatchStats(match.id) : null
   }));
 
   await Promise.all(matchesWithPredictions.map((match) => recordPrediction(match, { prediction: match.prediction })));
@@ -1127,6 +1130,9 @@ loadLocalSquads().then(() => {
     },
     // Snapshot dự đoán AI vào tracker ngay khi sinh, không chờ người dùng mở modal.
     onPredictionGenerated: (match, entry) => recordPrediction(match, { aiPrediction: entry })
+  });
+  initMatchStatsWorker({
+    getMatches: async () => (await buildLivePayload(false)).matches || []
   });
   server.listen(port, host, () => {
     console.log(`LiveCup server listening on http://${host}:${port}`);
