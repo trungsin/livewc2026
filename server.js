@@ -1,3 +1,8 @@
+// Nạp .env (GEMINI_API_KEY...) nếu có; thiếu file thì bỏ qua, env hệ thống vẫn dùng được.
+try {
+  process.loadEnvFile(require("node:path").join(__dirname, ".env"));
+} catch {}
+
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
