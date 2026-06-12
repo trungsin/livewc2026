@@ -256,12 +256,17 @@ function renderSchedule() {
     return;
   }
 
-  scheduleList.innerHTML = groupMatchesByDay(items).map((group) => `
-    <section class="day-group compact">
-      <h3 class="day-heading">${escapeHtml(group.heading)}</h3>
-      <div class="day-matches">
-        ${group.matches.map(renderMatchRow).join("")}
-      </div>
+  scheduleList.innerHTML = groupMatchesByStageAndDay(items).map((stage) => `
+    <section class="stage-group">
+      <h3 class="stage-heading">${escapeHtml(stage.label)}</h3>
+      ${stage.days.map((group) => `
+        <section class="day-group compact" data-day="${escapeHtml(group.day)}">
+          <h4 class="day-heading">${escapeHtml(group.heading)}</h4>
+          <div class="day-matches">
+            ${group.matches.map(renderMatchRow).join("")}
+          </div>
+        </section>
+      `).join("")}
     </section>
   `).join("");
 }

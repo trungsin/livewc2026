@@ -403,6 +403,20 @@ input {
   padding: 0 18px 18px;
 }
 
+.stage-group {
+  display: grid;
+  gap: 12px;
+}
+
+.stage-heading {
+  margin: 0;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .day-group {
   scroll-margin-top: 18px;
 }

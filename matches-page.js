@@ -26,7 +26,7 @@ function visibleMatches() {
 
 function renderMatchesPage() {
   const items = visibleMatches();
-  const groups = groupMatchesByDay(items);
+  const stages = groupMatchesByStageAndDay(items, { descending: activeTab === "results" });
 
   matchesCount.textContent = `${items.length} trận`;
   pageTabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === activeTab));
@@ -36,22 +36,23 @@ function renderMatchesPage() {
     return;
   }
 
-  if (activeTab === "results") {
-    groups.reverse();
-  }
-
-  matchesContainer.innerHTML = groups.map((group) => `
-    <section class="day-group" id="day-${escapeHtml(group.day)}">
-      <h3 class="day-heading">${escapeHtml(group.heading)}</h3>
-      <div class="day-matches">
-        ${group.matches.map(renderMatchRow).join("")}
-      </div>
+  matchesContainer.innerHTML = stages.map((stage) => `
+    <section class="stage-group">
+      <h3 class="stage-heading">${escapeHtml(stage.label)}</h3>
+      ${stage.days.map((group) => `
+        <section class="day-group" id="stage-${escapeHtml(stage.key)}-day-${escapeHtml(group.day)}" data-day="${escapeHtml(group.day)}">
+          <h4 class="day-heading">${escapeHtml(group.heading)}</h4>
+          <div class="day-matches">
+            ${group.matches.map(renderMatchRow).join("")}
+          </div>
+        </section>
+      `).join("")}
     </section>
   `).join("");
 
   if (!didAutoScroll && activeTab === "schedule") {
     didAutoScroll = true;
-    const today = document.getElementById(`day-${vnDayKey(new Date())}`);
+    const today = matchesContainer.querySelector(`[data-day="${vnDayKey(new Date())}"]`);
     if (today) {
       today.scrollIntoView({ block: "start" });
     }

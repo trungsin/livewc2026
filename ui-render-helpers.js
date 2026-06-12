@@ -96,6 +96,41 @@ function groupMatchesByDay(list) {
     }));
 }
 
+function stageMeta(match) {
+  const text = [match.type || "", match.group || "", match.round || ""].join(" ").toLowerCase();
+  if (/(round of|knock|quarter|semi|final|16|32|playoff|play-off|elimination)/.test(text)) {
+    return { key: "knockout", label: "Vòng loại trực tiếp", order: 1 };
+  }
+  if (/(group stage|group|bảng|matchday)/.test(text) || /^[a-l]$/.test(String(match.group || "").trim())) {
+    return { key: "group", label: "Giai đoạn bảng", order: 0 };
+  }
+  return { key: "other", label: "Khác", order: 2 };
+}
+
+function groupMatchesByStageAndDay(list, { descending = false } = {}) {
+  const stageMap = new Map();
+  for (const match of list || []) {
+    const meta = stageMeta(match);
+    if (!stageMap.has(meta.key)) {
+      stageMap.set(meta.key, { ...meta, matches: [] });
+    }
+    stageMap.get(meta.key).matches.push(match);
+  }
+
+  const stages = [...stageMap.values()].sort((a, b) => {
+    const diff = a.order - b.order;
+    return descending ? -diff : diff;
+  });
+
+  return stages.map((stage) => ({
+    ...stage,
+    days: groupMatchesByDay(stage.matches).map((group) => ({
+      ...group,
+      matches: descending ? [...group.matches].reverse() : group.matches
+    })).sort((a, b) => descending ? b.day.localeCompare(a.day) : a.day.localeCompare(b.day))
+  }));
+}
+
 function matchTime(match) {
   if (!match.kickoffUtc) {
     return match.kickoff || "--";

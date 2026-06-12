@@ -696,10 +696,22 @@ function buildSchedule(matches) {
     .filter((match) => match.status === "upcoming")
     .slice(0, 6)
     .map((match) => ({
+      stage: stageLabelForMatch(match),
       time: formatTime(match.kickoffUtc) || match.kickoff || "--",
       title: `${match.home} vs ${match.away}`,
       stadium: match.stadium || "Chưa rõ sân"
     }));
+}
+
+function stageLabelForMatch(match) {
+  const text = [match.type || "", match.group || "", match.round || ""].join(" ").toLowerCase();
+  if (/(round of|knock|quarter|semi|final|16|32|playoff|play-off|elimination)/.test(text)) {
+    return "Vòng loại trực tiếp";
+  }
+  if (/(group stage|group|bảng|matchday)/.test(text) || /^[a-l]$/.test(String(match.group || "").trim())) {
+    return "Giai đoạn bảng";
+  }
+  return "Khác";
 }
 
 function buildStandings(matches, groupsFromApi) {
