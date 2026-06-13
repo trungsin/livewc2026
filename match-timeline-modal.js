@@ -146,6 +146,7 @@ function openMatchTimelineModal(match, predictionStats = null) {
     .then((insight) => {
       if (modalMatchId === match.id) {
         insightContainer.innerHTML = renderInsightSection(insight, predictionStats, match);
+        maybeGenerateAiPrediction(match, insight, insightContainer, predictionStats);
       }
     })
     .catch(() => {
@@ -176,6 +177,57 @@ function openMatchTimelineModal(match, predictionStats = null) {
     .catch(() => {
       if (modalMatchId === match.id) {
         container.innerHTML = renderCommentaryList(fallbackEntries);
+      }
+    });
+}
+
+// Cửa sổ sinh AI: chỉ trận sắp đá trong 48h tới (khớp gate phía server).
+const AI_PREDICTION_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+function isWithinAiPredictionWindow(match) {
+  if (match.status !== "upcoming") {
+    return false;
+  }
+  const kickoff = Date.parse(match.kickoffUtc || "");
+  const now = Date.now();
+  return !Number.isNaN(kickoff) && kickoff > now && kickoff - now <= AI_PREDICTION_WINDOW_MS;
+}
+
+// Trận sắp đá ≤48h mà chưa có dự đoán AI → hiện placeholder rồi gọi endpoint sinh on-demand,
+// fill khối AI + tỉ số bongdaplus tại chỗ khi xong. Trận live/finished/ngoài cửa sổ: bỏ qua.
+function maybeGenerateAiPrediction(match, insight, insightContainer, predictionStats) {
+  if (insight?.aiPrediction || !isWithinAiPredictionWindow(match)) {
+    return;
+  }
+
+  const aiSlot = insightContainer.querySelector(".ai-insight-slot");
+  if (aiSlot) {
+    aiSlot.innerHTML = `<div class="insight-source ai-insight"><div class="empty-state">🤖 AI đang phân tích trận đấu…</div></div>`;
+  }
+
+  fetchMatchAiPrediction(match.id)
+    .then((result) => {
+      if (modalMatchId !== match.id) {
+        return;
+      }
+      const slot = insightContainer.querySelector(".ai-insight-slot");
+      if (slot) {
+        slot.innerHTML = result.aiPrediction
+          ? renderAiPredictionBlock(result.aiPrediction, predictionStats)
+          : `<div class="insight-source ai-insight"><div class="empty-state">Chưa tạo được dự đoán AI cho trận này.</div></div>`;
+      }
+      const scoreSlot = insightContainer.querySelector(".bdp-exact-score-slot");
+      if (scoreSlot && result.bongdaplusExactScore) {
+        scoreSlot.innerHTML = renderBongdaplusExactScore(result.bongdaplusExactScore);
+      }
+    })
+    .catch(() => {
+      if (modalMatchId !== match.id) {
+        return;
+      }
+      const slot = insightContainer.querySelector(".ai-insight-slot");
+      if (slot) {
+        slot.innerHTML = `<div class="insight-source ai-insight"><div class="empty-state">Chưa tạo được dự đoán AI cho trận này.</div></div>`;
       }
     });
 }

@@ -1,24 +1,21 @@
-// Worker sinh dự đoán AI (Gemini Flash) cho các trận đá trong 48h tới.
-// Mỗi trận sinh đúng 1 lần, lưu bền data/ai-predictions.json; không có GEMINI_API_KEY thì no-op.
+// Dự đoán AI (Gemini Flash) cho trận sắp đá: sinh on-demand khi người dùng mở trận
+// upcoming trong 48h tới, lưu bền data/ai-predictions.json, lần sau dùng lại.
+// Không có GEMINI_API_KEY thì no-op (trả null sạch).
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { displayTeamName } = require("./team-names-vietnamese.js");
-const { buildMatchInsight } = require("./match-insight-builder.js");
 
 const storePath = path.join(__dirname, "data", "ai-predictions.json");
 const GEMINI_MODEL = "gemini-2.5-flash";
 const KICKOFF_WINDOW_MS = 48 * 60 * 60 * 1000;
-const CYCLE_MS = 30 * 60 * 1000;
-const MAX_PER_CYCLE = 3;
+const MAX_SCORES = 5;
 
 const store = { version: 1, matches: {} };
 let loaded = false;
 let saveTimer = null;
-let workerStarted = false;
-let generating = false;
-let getLiveContext = null;
-let onPredictionGenerated = null;
+// Chống sinh trùng khi nhiều request cùng tới cho một trận.
+const inFlight = new Map();
 
 async function loadStore() {
   if (loaded) {
@@ -51,55 +48,8 @@ function getAiPrediction(matchId) {
   return store.matches[String(matchId)] || null;
 }
 
-function initAiPredictionWorker(options = {}) {
-  getLiveContext = options.getLiveContext || null;
-  onPredictionGenerated = options.onPredictionGenerated || null;
-  if (workerStarted) {
-    return;
-  }
-  workerStarted = true;
-  setTimeout(runGenerationCycle, 60 * 1000).unref?.();
-  setInterval(runGenerationCycle, CYCLE_MS).unref?.();
-}
-
-async function runGenerationCycle() {
-  if (!process.env.GEMINI_API_KEY || generating || typeof getLiveContext !== "function") {
-    return;
-  }
-  generating = true;
-  try {
-    const context = await getLiveContext();
-    const matches = Array.isArray(context?.matches) ? context.matches : [];
-    const now = Date.now();
-    const candidates = matches.filter((match) => {
-      if (match.status !== "upcoming" || getAiPrediction(match.id)) {
-        return false;
-      }
-      const kickoff = Date.parse(match.kickoffUtc || "");
-      return !Number.isNaN(kickoff) && kickoff > now && kickoff - now <= KICKOFF_WINDOW_MS;
-    }).slice(0, MAX_PER_CYCLE);
-
-    for (const match of candidates) {
-      // Lấy kèo + tip mới nhất của riêng trận này làm dữ kiện cho prompt.
-      const insight = await buildMatchInsight({ match }).catch(() => null);
-      const entry = await generateForMatch(match, { ...context, insight });
-      if (entry) {
-        store.matches[match.id] = entry;
-        scheduleSave();
-        if (typeof onPredictionGenerated === "function") {
-          await onPredictionGenerated(match, entry);
-        }
-      }
-    }
-  } catch {
-    // Cycle lỗi thì chờ cycle sau, không crash server.
-  } finally {
-    generating = false;
-  }
-}
-
 function recentResultsOf(teamName, matches) {
-  return matches
+  return (matches || [])
     .filter((match) => match.status === "finished" && (match.home === teamName || match.away === teamName))
     .slice(-3)
     .map((match) => `${match.home} ${match.homeScore}-${match.awayScore} ${match.away}`);
@@ -147,10 +97,10 @@ function buildPrompt(match, context) {
   }
 
   lines.push(
+    "Dựa vào phong độ hiện tại, dự đoán 5 tỉ số CÓ THỂ XẢY RA, xếp theo khả năng giảm dần.",
     "Trả về DUY NHẤT một JSON object (không markdown) theo schema:",
     '{"analysis": "nhận định tiếng Việt khoảng 120-180 từ, GIỮ NGUYÊN tên đội như đề bài",',
-    '"predictedScore": "X-Y" (X là bàn của đội nhà ' + match.home + '),',
-    '"probs": {"home": 0.4, "draw": 0.3, "away": 0.3}, "confidence": 0.0-1.0}'
+    `"scores": [{"score": "X-Y", "reason": "lý do ngắn tiếng Việt"} ... đúng 5 phần tử, X là bàn của đội nhà ${match.home}, xếp khả năng giảm dần]}`
   );
   return lines.join("\n");
 }
@@ -160,29 +110,29 @@ function validateAiOutput(parsed) {
     return null;
   }
   const analysis = String(parsed.analysis || "").trim();
-  const predictedScore = String(parsed.predictedScore || "").trim();
-  if (!analysis || !/^\d{1,2}-\d{1,2}$/.test(predictedScore)) {
+  if (!analysis || !Array.isArray(parsed.scores)) {
     return null;
   }
 
-  const rawProbs = parsed.probs || {};
-  const home = Number(rawProbs.home);
-  const draw = Number(rawProbs.draw);
-  const away = Number(rawProbs.away);
-  const total = home + draw + away;
-  if (!Number.isFinite(total) || total <= 0) {
+  const scores = [];
+  for (const item of parsed.scores) {
+    const score = String(item?.score || "").replace(/\s+/g, "").trim();
+    const reason = String(item?.reason || "").trim();
+    if (/^\d{1,2}-\d{1,2}$/.test(score) && reason) {
+      scores.push({ score, reason });
+    }
+    if (scores.length >= MAX_SCORES) {
+      break;
+    }
+  }
+  if (!scores.length) {
     return null;
   }
 
   return {
     analysis,
-    predictedScore,
-    probs: {
-      home: Number((home / total).toFixed(4)),
-      draw: Number((draw / total).toFixed(4)),
-      away: Number((away / total).toFixed(4))
-    },
-    confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5))
+    scores,
+    predictedScore: scores[0].score
   };
 }
 
@@ -221,6 +171,45 @@ async function generateForMatch(match, context) {
   }
 }
 
+function isWithinPredictionWindow(match) {
+  if (!match || match.status !== "upcoming") {
+    return false;
+  }
+  const kickoff = Date.parse(match.kickoffUtc || "");
+  const now = Date.now();
+  return !Number.isNaN(kickoff) && kickoff > now && kickoff - now <= KICKOFF_WINDOW_MS;
+}
+
+// Sinh on-demand: trả cached nếu có; nếu chưa + đủ điều kiện + có key → gọi Gemini,
+// lưu store, trả entry. Thiếu key / ngoài cửa sổ 48h / không phải trận sắp đá → null.
+async function ensureAiPrediction(match, context = {}) {
+  await loadStore();
+  const cached = getAiPrediction(match?.id);
+  if (cached) {
+    return cached;
+  }
+  if (!process.env.GEMINI_API_KEY || !isWithinPredictionWindow(match)) {
+    return null;
+  }
+
+  const key = String(match.id);
+  if (inFlight.has(key)) {
+    return inFlight.get(key);
+  }
+
+  const task = (async () => {
+    const entry = await generateForMatch(match, context);
+    if (entry) {
+      store.matches[key] = entry;
+      scheduleSave();
+    }
+    return entry;
+  })().finally(() => inFlight.delete(key));
+
+  inFlight.set(key, task);
+  return task;
+}
+
 loadStore();
 
-module.exports = { initAiPredictionWorker, getAiPrediction };
+module.exports = { getAiPrediction, ensureAiPrediction };

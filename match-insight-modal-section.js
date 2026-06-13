@@ -8,6 +8,15 @@ async function fetchMatchInsight(matchId) {
   return response.json();
 }
 
+// Sinh on-demand dự đoán AI 5 tỉ số + OCR tỉ số bongdaplus (chỉ trận sắp đá ≤48h).
+async function fetchMatchAiPrediction(matchId) {
+  const response = await fetch(`/api/match-ai-prediction?matchId=${encodeURIComponent(matchId)}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 function insightValue(value, fallback = "--") {
   return value === null || value === undefined || value === "" ? fallback : String(value);
 }
@@ -73,32 +82,34 @@ function renderBongdaplusInsight(prediction, predictionStats) {
   `;
 }
 
-function probBarSegments(probs, match) {
-  const labels = {
-    home: match ? displayTeamName(match.home) : "Chủ nhà",
-    draw: "Hòa",
-    away: match ? displayTeamName(match.away) : "Khách"
-  };
-  return ["home", "draw", "away"].map((key) => {
-    const percent = Math.round(Number(probs?.[key] || 0) * 100);
-    return {
-      key,
-      percent,
-      label: `${labels[key]} ${percent}%`
-    };
-  }).filter((segment) => segment.percent > 0);
+function renderAiScoreTable(scores) {
+  if (!Array.isArray(scores) || !scores.length) {
+    return "";
+  }
+  const rows = scores.map((item) => `
+    <tr>
+      <td class="ai-score-cell">${escapeHtml(item.score)}</td>
+      <td>${escapeHtml(item.reason)}</td>
+    </tr>
+  `).join("");
+  return `
+    <table class="ai-score-table">
+      <thead>
+        <tr><th>Tỷ số dự đoán</th><th>Lý do</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
-function renderAiPredictionBlock(aiPrediction, predictionStats, match) {
+function renderAiPredictionBlock(aiPrediction, predictionStats) {
   if (!aiPrediction) {
     return "";
   }
 
   const badges = [
-    predictionStatsBadge(predictionStats, "ai", "oneXTwo"),
     predictionStatsBadge(predictionStats, "ai", "score")
   ].filter(Boolean).join("");
-  const segments = probBarSegments(aiPrediction.probs, match);
 
   return `
     <div class="insight-source ai-insight">
@@ -107,15 +118,22 @@ function renderAiPredictionBlock(aiPrediction, predictionStats, match) {
         ${badges ? `<div class="prediction-badges">${badges}</div>` : ""}
       </div>
       ${aiPrediction.analysis ? `<p class="insight-tip">${escapeHtml(aiPrediction.analysis)}</p>` : ""}
-      ${aiPrediction.predictedScore ? `<p class="insight-score">AI dự đoán tỉ số: <strong>${escapeHtml(aiPrediction.predictedScore)}</strong></p>` : ""}
-      ${segments.length ? `
-        <div class="prob-bar" role="img" aria-label="Xác suất kết quả">
-          ${segments.map((segment) => `<span class="prob-segment is-${segment.key}" style="width:${segment.percent}%" title="${escapeHtml(segment.label)}"></span>`).join("")}
-        </div>
-        <div class="prob-bar-labels">
-          ${segments.map((segment) => `<span class="prob-label is-${segment.key}">${escapeHtml(segment.label)}</span>`).join("")}
-        </div>
-      ` : ""}
+      ${renderAiScoreTable(aiPrediction.scores)}
+    </div>
+  `;
+}
+
+// Dự đoán tỉ số chính xác đọc từ ảnh bài Bongdaplus (Gemini vision OCR).
+function renderBongdaplusExactScore(exactScore) {
+  const text = exactScore?.text ? String(exactScore.text).trim() : "";
+  if (!text) {
+    return "";
+  }
+  return `
+    <div class="bdp-exact-score">
+      <h5>Bongdaplus dự đoán tỉ số chính xác</h5>
+      <p>${escapeHtml(text)}</p>
+      <p class="insight-source-note">Đọc từ ảnh bài Bongdaplus</p>
     </div>
   `;
 }
@@ -208,16 +226,23 @@ function renderOddsTable(insight, predictionStats) {
 }
 
 function renderInsightSection(insight, predictionStats, match = null) {
-  const aiBlock = renderAiPredictionBlock(insight?.aiPrediction, predictionStats, match);
+  const aiBlock = renderAiPredictionBlock(insight?.aiPrediction, predictionStats);
   const predictionBlock = renderBongdaplusInsight(insight?.prediction, predictionStats);
   const oddsBlock = renderOddsTable(insight || {}, predictionStats);
+  const exactScoreBlock = renderBongdaplusExactScore(insight?.bongdaplusExactScore);
+  const hasContent = aiBlock || predictionBlock || oddsBlock || exactScoreBlock;
 
+  // Slot có class cố định để modal fill AI/OCR on-demand tại chỗ khi endpoint trả về.
   return `
     <section class="match-insight-section" aria-label="Nhận định và kèo">
       <div class="insight-section-header">
         <h3>Nhận định &amp; kèo</h3>
       </div>
-      ${aiBlock || predictionBlock || oddsBlock ? `${aiBlock}${predictionBlock}${oddsBlock}` : `<div class="empty-state">Chưa có dữ liệu nhận định cho trận này.</div>`}
+      <div class="ai-insight-slot">${aiBlock}</div>
+      ${predictionBlock}
+      ${oddsBlock}
+      <div class="bdp-exact-score-slot">${exactScoreBlock}</div>
+      ${hasContent ? "" : `<div class="empty-state">Chưa có dữ liệu nhận định cho trận này.</div>`}
       <p class="insight-disclaimer">Thông tin tham khảo, không phải khuyến nghị cá cược.</p>
     </section>
   `;

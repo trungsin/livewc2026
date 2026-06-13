@@ -12,7 +12,8 @@ const { translateTeamNamesInText } = require("./team-names-vietnamese.js");
 const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
 const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
-const { initAiPredictionWorker, getAiPrediction } = require("./ai-match-prediction-generator.js");
+const { getAiPrediction, ensureAiPrediction } = require("./ai-match-prediction-generator.js");
+const { getBongdaplusExactScore, ensureBongdaplusExactScore } = require("./bongdaplus-exact-score-ocr.js");
 const { initMatchStatsWorker, getMatchStats } = require("./espn-match-stats.js");
 
 const root = __dirname;
@@ -1078,6 +1079,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, {
           ...cached.payload,
           aiPrediction: getAiPrediction(matchId),
+          bongdaplusExactScore: getBongdaplusExactScore(matchId),
           cache: { hit: true, ttlMs: 5 * 60 * 1000 - (now - cached.createdAt) }
         });
         return;
@@ -1088,10 +1090,43 @@ const server = http.createServer(async (req, res) => {
       const payload = {
         ...insight,
         aiPrediction: getAiPrediction(matchId),
+        bongdaplusExactScore: getBongdaplusExactScore(matchId),
         cache: { hit: false, ttlMs: 5 * 60 * 1000 }
       };
       cache.set(key, { createdAt: now, payload });
       sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/match-ai-prediction") {
+    const matchId = url.searchParams.get("matchId") || "";
+    if (!/^[\w-]+$/.test(matchId)) {
+      sendJson(res, 400, { error: "matchId không hợp lệ" });
+      return;
+    }
+
+    try {
+      const livePayload = await buildLivePayload(false);
+      const match = (livePayload.matches || []).find((item) => item.id === matchId);
+      if (!match) {
+        sendJson(res, 404, { error: "Không tìm thấy trận đấu" });
+        return;
+      }
+
+      // AI sinh on-demand 5 tỉ số (chỉ trận upcoming ≤48h, gate trong ensureAiPrediction);
+      // OCR bongdaplus đọc ảnh dự đoán tỉ số chính xác. Cả hai no-op khi thiếu key.
+      const insight = await buildMatchInsight({ match, prediction: match.prediction }).catch(() => null);
+      const [aiPrediction, bongdaplusExactScore] = await Promise.all([
+        ensureAiPrediction(match, { matches: livePayload.matches || [], standings: livePayload.standings || [], insight }),
+        ensureBongdaplusExactScore(match.id, match.prediction?.url || "")
+      ]);
+      if (aiPrediction) {
+        await recordPrediction(match, { aiPrediction });
+      }
+      sendJson(res, 200, { aiPrediction, bongdaplusExactScore });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -1123,14 +1158,8 @@ const server = http.createServer(async (req, res) => {
 const host = process.env.HOST || "0.0.0.0";
 
 loadLocalSquads().then(() => {
-  initAiPredictionWorker({
-    getLiveContext: async () => {
-      const payload = await buildLivePayload(false);
-      return { matches: payload.matches || [], standings: payload.standings || [] };
-    },
-    // Snapshot dự đoán AI vào tracker ngay khi sinh, không chờ người dùng mở modal.
-    onPredictionGenerated: (match, entry) => recordPrediction(match, { aiPrediction: entry })
-  });
+  // Dự đoán AI sinh on-demand khi người dùng mở trận (endpoint /api/match-ai-prediction),
+  // không còn worker nền tự sinh hàng loạt.
   initMatchStatsWorker({
     getMatches: async () => (await buildLivePayload(false)).matches || []
   });
