@@ -74,6 +74,8 @@ function filteredMatches() {
 const UPCOMING_WINDOW_MS = 5 * 60 * 60 * 1000;
 // Trận FT chỉ ở lại tab "Đang đấu" ~10 phút sau mãn cuộc rồi nhường chỗ (vẫn xem được ở tab Kết quả).
 const FT_LINGER_MS = 10 * 60 * 1000;
+// Trận sắp đá hiện sẵn ở tab "Đang đấu" từ 30 phút trước giờ bóng lăn.
+const PRE_KICKOFF_WINDOW_MS = 30 * 60 * 1000;
 // Khi không bắt được khoảnh khắc FT (mở trang sau khi trận đã xong), ước lượng từ giờ bóng lăn:
 // 90' + nghỉ giữa hiệp + bù giờ ≈ 120', cộng 10 phút hiển thị.
 const FT_LINGER_FROM_KICKOFF_MS = 130 * 60 * 1000;
@@ -114,9 +116,11 @@ function homeMatchesForActiveTab() {
       .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
   }
 
-  // Mặc định tab "Đang đấu": trận đang diễn ra + trận vừa mãn cuộc còn neo lại ít phút.
+  // Mặc định tab "Đang đấu": trận đang diễn ra + trận sắp đá trong 30 phút tới
+  // + trận vừa mãn cuộc còn neo lại ít phút.
   return matches
     .filter((match) => match.status === "live" || match.status === "halftime"
+      || (match.status === "upcoming" && kickoffTimestamp(match) > now && kickoffTimestamp(match) - now <= PRE_KICKOFF_WINDOW_MS)
       || (match.status === "finished" && finishedStillInLiveSection(match, now)))
     .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b));
 }

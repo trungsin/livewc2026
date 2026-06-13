@@ -9,25 +9,29 @@ const storePath = path.join(__dirname, "data", "bongdaplus-score-cache.json");
 const GEMINI_MODEL = "gemini-2.5-flash";
 const MAX_IMAGES = 3;
 const MAX_TEXT_LEN = 500;
+// Bump khi đổi logic OCR/hướng tỉ số → entry version cũ tự coi là stale, OCR lại.
+const OCR_SCHEMA_VERSION = 2;
 
 const store = { version: 1, matches: {} };
-let loaded = false;
+let loadPromise = null;
 let saveTimer = null;
 const inFlight = new Map();
 
-async function loadStore() {
-  if (loaded) {
-    return;
+// Shared promise: nhiều request đồng thời cùng đợi 1 lần đọc cache xong (tránh race miss cache).
+function loadStore() {
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      try {
+        const data = JSON.parse(await fs.readFile(storePath, "utf8"));
+        if (data && typeof data.matches === "object") {
+          store.matches = data.matches;
+        }
+      } catch {
+        // Cache chưa có hoặc hỏng → khởi tạo rỗng.
+      }
+    })();
   }
-  loaded = true;
-  try {
-    const data = JSON.parse(await fs.readFile(storePath, "utf8"));
-    if (data && typeof data.matches === "object") {
-      store.matches = data.matches;
-    }
-  } catch {
-    // Cache chưa có hoặc hỏng → khởi tạo rỗng.
-  }
+  return loadPromise;
 }
 
 function scheduleSave() {
@@ -43,7 +47,12 @@ function scheduleSave() {
 }
 
 function getBongdaplusExactScore(matchId) {
-  return store.matches[String(matchId)] || null;
+  const entry = store.matches[String(matchId)];
+  // Bỏ qua entry schema cũ (chưa đảo hướng tỉ số theo đội nhà/khách) → sẽ OCR lại.
+  if (!entry || entry.schema !== OCR_SCHEMA_VERSION) {
+    return null;
+  }
+  return entry;
 }
 
 function fetchWithTimeout(url, options = {}, ms = 8000) {
@@ -89,13 +98,19 @@ async function imageToInlineData(url) {
   }
 }
 
-async function ocrViaGemini(imageParts) {
+async function ocrViaGemini(imageParts, teams) {
+  const homeVi = teams?.home || "";
+  const awayVi = teams?.away || "";
+  const orientationLine = homeVi && awayVi
+    ? `QUAN TRỌNG: đội nhà là "${homeVi}", đội khách là "${awayVi}". Trong ảnh thứ tự đội có thể NGƯỢC lại; hãy đọc xem tỉ số trong ảnh thuộc đội nào rồi đảo lại sao cho mỗi tỉ số "X-Y" có X là bàn của ĐỘI NHÀ (${homeVi}), Y là bàn của ĐỘI KHÁCH (${awayVi}).`
+    : "";
   const prompt = [
     "Các ảnh sau lấy từ một bài nhận định bóng đá tiếng Việt.",
     "Tìm bảng TỈ LỆ KÈO TỈ SỐ CHÍNH XÁC: một bảng liệt kê nhiều tỉ số (ví dụ 1-0, 2-1, 0-0) mỗi tỉ số kèm một con số tỉ lệ cược. Tỉ lệ càng THẤP nghĩa là tỉ số càng DỄ xảy ra.",
+    orientationLine,
     "Nếu tìm thấy bảng này, trả về JSON {\"text\": \"...\"} với text là danh sách 5-6 tỉ số có tỉ lệ THẤP NHẤT (dễ xảy ra nhất), xếp từ thấp đến cao, định dạng: \"Tỉ số chính xác (tỉ lệ thấp = dễ xảy ra): 2-0 (5.7), 1-0 (7), ...\". Giữ nguyên tiếng Việt.",
     "Nếu KHÔNG có bảng tỉ số chính xác nào, trả về {\"text\": \"\"}. Chỉ trả JSON, không markdown."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -124,30 +139,35 @@ async function ocrViaGemini(imageParts) {
   }
 }
 
-async function runOcr(matchId, articleUrl) {
+function makeEntry(text, sourceImages) {
+  return { text, sourceImages, schema: OCR_SCHEMA_VERSION, generatedAt: new Date().toISOString() };
+}
+
+async function runOcr(matchId, articleUrl, teams) {
   const article = await fetchWithTimeout(articleUrl, {}, 8000).then((r) => (r.ok ? r.text() : "")).catch(() => "");
   if (!article) {
     return null;
   }
   const imageUrls = extractArticleImages(article);
   if (!imageUrls.length) {
-    return { text: "", sourceImages: [], generatedAt: new Date().toISOString() };
+    return makeEntry("", []);
   }
 
   const imageParts = (await Promise.all(imageUrls.map(imageToInlineData))).filter(Boolean);
   if (!imageParts.length) {
-    return { text: "", sourceImages: imageUrls, generatedAt: new Date().toISOString() };
+    return makeEntry("", imageUrls);
   }
 
-  const text = await ocrViaGemini(imageParts);
+  const text = await ocrViaGemini(imageParts, teams);
   if (text === null) {
     return null;
   }
-  return { text, sourceImages: imageUrls, generatedAt: new Date().toISOString() };
+  return makeEntry(text, imageUrls);
 }
 
 // On-demand: trả cached (kể cả rỗng) nếu có; chưa + có key + có URL → OCR, cache, return.
-async function ensureBongdaplusExactScore(matchId, articleUrl) {
+// teams = { home, away } tên tiếng Việt để đảo hướng tỉ số khớp lịch thi đấu.
+async function ensureBongdaplusExactScore(matchId, articleUrl, teams = {}) {
   await loadStore();
   const cached = getBongdaplusExactScore(matchId);
   if (cached) {
@@ -163,7 +183,7 @@ async function ensureBongdaplusExactScore(matchId, articleUrl) {
   }
 
   const task = (async () => {
-    const entry = await runOcr(key, articleUrl);
+    const entry = await runOcr(key, articleUrl, teams);
     if (entry) {
       store.matches[key] = entry;
       scheduleSave();

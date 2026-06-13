@@ -12,24 +12,26 @@ const KICKOFF_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MAX_SCORES = 5;
 
 const store = { version: 1, matches: {} };
-let loaded = false;
+let loadPromise = null;
 let saveTimer = null;
 // Chống sinh trùng khi nhiều request cùng tới cho một trận.
 const inFlight = new Map();
 
-async function loadStore() {
-  if (loaded) {
-    return;
+// Shared promise: nhiều request đồng thời cùng đợi 1 lần đọc store xong (tránh race miss cache).
+function loadStore() {
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      try {
+        const data = JSON.parse(await fs.readFile(storePath, "utf8"));
+        if (data && typeof data.matches === "object") {
+          store.matches = data.matches;
+        }
+      } catch {
+        // Store chưa có hoặc hỏng → khởi tạo rỗng, server vẫn chạy bình thường.
+      }
+    })();
   }
-  loaded = true;
-  try {
-    const data = JSON.parse(await fs.readFile(storePath, "utf8"));
-    if (data && typeof data.matches === "object") {
-      store.matches = data.matches;
-    }
-  } catch {
-    // Store chưa có hoặc hỏng → khởi tạo rỗng, server vẫn chạy bình thường.
-  }
+  return loadPromise;
 }
 
 function scheduleSave() {

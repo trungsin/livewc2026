@@ -8,7 +8,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { translateEspnCommentary, looksUntranslated, logUntranslated } = require("./espn-commentary-vietnamese-translator.js");
 const { translateViaCache } = require("./gemini-commentary-translation-fallback.js");
-const { translateTeamNamesInText } = require("./team-names-vietnamese.js");
+const { translateTeamNamesInText, displayTeamName } = require("./team-names-vietnamese.js");
 const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
 const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
@@ -1124,7 +1124,7 @@ const server = http.createServer(async (req, res) => {
         : await buildMatchInsight({ match, prediction: match.prediction }).catch(() => null);
       const [aiPrediction, bongdaplusExactScore] = await Promise.all([
         ensureAiPrediction(match, { matches: livePayload.matches || [], standings: livePayload.standings || [], insight }),
-        ensureBongdaplusExactScore(match.id, match.prediction?.url || "")
+        ensureBongdaplusExactScore(match.id, match.prediction?.url || "", { home: displayTeamName(match.home), away: displayTeamName(match.away) })
       ]);
       if (aiPrediction) {
         await recordPrediction(match, { aiPrediction });
