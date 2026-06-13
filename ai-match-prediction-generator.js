@@ -45,7 +45,13 @@ function scheduleSave() {
 }
 
 function getAiPrediction(matchId) {
-  return store.matches[String(matchId)] || null;
+  const entry = store.matches[String(matchId)];
+  // Bỏ qua entry format cũ (chỉ có predictedScore, thiếu mảng scores) → coi như chưa có,
+  // sẽ được sinh lại theo format 5 tỉ số khi người dùng mở trận.
+  if (!entry || !Array.isArray(entry.scores) || !entry.scores.length) {
+    return null;
+  }
+  return entry;
 }
 
 function recentResultsOf(teamName, matches) {

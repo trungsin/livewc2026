@@ -92,9 +92,9 @@ async function imageToInlineData(url) {
 async function ocrViaGemini(imageParts) {
   const prompt = [
     "Các ảnh sau lấy từ một bài nhận định bóng đá tiếng Việt.",
-    "Trong ảnh có phần dự đoán tỉ số chính xác của trận đấu không (ví dụ \"Dự đoán tỉ số\", \"Tỉ số chính xác\")?",
-    "Nếu CÓ, trả về JSON {\"text\": \"<nội dung dự đoán tỉ số, giữ nguyên tiếng Việt>\"}.",
-    "Nếu KHÔNG có, trả về {\"text\": \"\"}. Chỉ trả JSON, không markdown."
+    "Tìm bảng TỈ LỆ KÈO TỈ SỐ CHÍNH XÁC: một bảng liệt kê nhiều tỉ số (ví dụ 1-0, 2-1, 0-0) mỗi tỉ số kèm một con số tỉ lệ cược. Tỉ lệ càng THẤP nghĩa là tỉ số càng DỄ xảy ra.",
+    "Nếu tìm thấy bảng này, trả về JSON {\"text\": \"...\"} với text là danh sách 5-6 tỉ số có tỉ lệ THẤP NHẤT (dễ xảy ra nhất), xếp từ thấp đến cao, định dạng: \"Tỉ số chính xác (tỉ lệ thấp = dễ xảy ra): 2-0 (5.7), 1-0 (7), ...\". Giữ nguyên tiếng Việt.",
+    "Nếu KHÔNG có bảng tỉ số chính xác nào, trả về {\"text\": \"\"}. Chỉ trả JSON, không markdown."
   ].join("\n");
 
   const controller = new AbortController();
