@@ -225,6 +225,55 @@ function renderOddsTable(insight, predictionStats) {
   `;
 }
 
+// Bảng đối chiếu dự đoán trước trận với kết quả thật (đúng tỉ số / đúng kết cục / sai).
+function renderRecapComparisonRows(comparisons) {
+  if (!Array.isArray(comparisons) || !comparisons.length) {
+    return "";
+  }
+  const rows = comparisons.map((row) => {
+    const verdict = row.scoreHit
+      ? `<span class="recap-verdict is-hit">✓ Đúng tỉ số</span>`
+      : row.oneXTwoHit
+        ? `<span class="recap-verdict is-partial">✓ Đúng kết cục</span>`
+        : `<span class="recap-verdict is-miss">✗ Sai</span>`;
+    return `
+      <tr>
+        <td>${escapeHtml(row.label)}</td>
+        <td class="recap-pred">${escapeHtml(row.predicted)}</td>
+        <td>${verdict}</td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <table class="recap-table">
+      <thead><tr><th>Nguồn</th><th>Dự đoán</th><th>Đối chiếu</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+// Khối tổng hợp sau trận (section đầu modal). recap=null + trận đã xong → hiện trạng thái đang tổng hợp.
+function renderMatchRecap(recap, match = null) {
+  if (!recap) {
+    if (match && match.status === "finished") {
+      return `
+        <section class="match-recap">
+          <h3>🤖 Tổng hợp sau trận</h3>
+          <div class="empty-state">Đang tổng hợp, quay lại sau giây lát…</div>
+        </section>
+      `;
+    }
+    return "";
+  }
+  return `
+    <section class="match-recap">
+      <h3>🤖 Tổng hợp sau trận</h3>
+      ${recap.summary ? `<p class="recap-summary">${escapeHtml(recap.summary)}</p>` : ""}
+      ${renderRecapComparisonRows(recap.comparisons)}
+    </section>
+  `;
+}
+
 function renderInsightSection(insight, predictionStats, match = null) {
   const aiBlock = renderAiPredictionBlock(insight?.aiPrediction, predictionStats);
   const predictionBlock = renderBongdaplusInsight(insight?.prediction, predictionStats);
@@ -233,11 +282,9 @@ function renderInsightSection(insight, predictionStats, match = null) {
   const hasContent = aiBlock || predictionBlock || oddsBlock || exactScoreBlock;
 
   // Slot có class cố định để modal fill AI/OCR on-demand tại chỗ khi endpoint trả về.
+  // Tiêu đề "Nhận định & kèo" do summary của <details> bọc ngoài cung cấp.
   return `
     <section class="match-insight-section" aria-label="Nhận định và kèo">
-      <div class="insight-section-header">
-        <h3>Nhận định &amp; kèo</h3>
-      </div>
       <div class="ai-insight-slot">${aiBlock}</div>
       ${predictionBlock}
       ${oddsBlock}

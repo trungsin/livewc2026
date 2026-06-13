@@ -102,7 +102,6 @@ function renderMatchStatsTable(match) {
   }
   return `
     <div class="match-stats-table-wrap">
-      <h3>Thông số trận đấu</h3>
       <table class="match-stats-table">
         <thead>
           <tr>
@@ -117,9 +116,24 @@ function renderMatchStatsTable(match) {
   `;
 }
 
+// Bọc một khối vào <details> thu gọn (summary là tiêu đề); open=true để mở sẵn.
+function collapsibleSection(title, innerHtml, open = false) {
+  return `
+    <details class="modal-collapse"${open ? " open" : ""}>
+      <summary>${escapeHtml(title)}</summary>
+      <div class="modal-collapse-body">${innerHtml}</div>
+    </details>
+  `;
+}
+
 function openMatchTimelineModal(match, predictionStats = null) {
   const modal = ensureMatchModal();
   modalMatchId = match.id;
+
+  const isLive = match.status === "live" || match.status === "halftime";
+  const statsTable = renderMatchStatsTable(match);
+  const timelineSlot = `<div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>`;
+  const insightSlot = `<div class="match-modal-insight"><div class="empty-state">Đang tải nhận định &amp; kèo…</div></div>`;
 
   modal.querySelector(".match-modal-body").innerHTML = `
     <div class="match-modal-header">
@@ -135,16 +149,21 @@ function openMatchTimelineModal(match, predictionStats = null) {
     </div>
     <div class="match-meta">${escapeHtml(matchModalStatusLabel(match))} / ${escapeHtml(match.group || "World Cup")}${match.kickoffUtc ? ` / ${escapeHtml(formatKickoff(match.kickoffUtc))}` : ""}</div>
     ${renderFinishedStatsLines(match)}
-    ${renderMatchStatsTable(match)}
-    ${match.status === "upcoming" ? "" : `<div class="match-modal-timeline"><div class="empty-state">Đang tải diễn biến…</div></div>`}
-    <div class="match-modal-insight"><div class="empty-state">Đang tải nhận định &amp; kèo…</div></div>
+    <div class="match-modal-recap">${match.status === "finished" ? renderMatchRecap(null, match) : ""}</div>
+    ${statsTable ? collapsibleSection("Thông số trận đấu", statsTable) : ""}
+    ${match.status === "upcoming" ? "" : collapsibleSection("Diễn biến", timelineSlot, isLive)}
+    ${collapsibleSection("Nhận định & kèo", insightSlot, match.status === "upcoming")}
   `;
   modal.classList.remove("hidden");
 
   const insightContainer = modal.querySelector(".match-modal-insight");
+  const recapContainer = modal.querySelector(".match-modal-recap");
   fetchMatchInsight(match.id)
     .then((insight) => {
       if (modalMatchId === match.id) {
+        if (recapContainer) {
+          recapContainer.innerHTML = renderMatchRecap(insight.recap, match);
+        }
         insightContainer.innerHTML = renderInsightSection(insight, predictionStats, match);
         maybeGenerateAiPrediction(match, insight, insightContainer, predictionStats);
       }
@@ -162,13 +181,16 @@ function openMatchTimelineModal(match, predictionStats = null) {
   const container = modal.querySelector(".match-modal-timeline");
   const fallbackEntries = entriesFromMatchDetails(match);
   const espnId = match.rawIds?.espn;
+  // Trận đã xong: ưu tiên bản đóng băng theo matchId (còn cả khi đã mất espnId).
+  // Trận đang đá: fetch live theo espnId.
+  const isFinished = match.status === "finished";
 
-  if (!espnId) {
+  if (!espnId && !isFinished) {
     container.innerHTML = renderCommentaryList(fallbackEntries);
     return;
   }
 
-  fetchMatchTimeline(espnId)
+  fetchMatchTimeline({ espnId, matchId: isFinished ? match.id : "" })
     .then((entries) => {
       if (modalMatchId === match.id) {
         container.innerHTML = renderCommentaryList(entries.length ? entries : fallbackEntries);

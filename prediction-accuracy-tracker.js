@@ -253,10 +253,69 @@ function getStats() {
   return stats;
 }
 
+// Chuyển dự đoán TRƯỚC TRẬN từ entry cũ sang entry đích (chỉ điền chỗ trống).
+// Cố tình KHÔNG mang theo actual/scored — kết quả luôn được scoreFinishedMatches chấm lại từ live
+// để tránh dữ liệu kết quả cũ bị sai (vd trận từng bị chốt nhầm tỉ số).
+function mergePredictionsInto(target, legacy) {
+  target.predictions = target.predictions || { bongdaplus: null, oddsImplied: null };
+  for (const source of ["bongdaplus", "oddsImplied", "ai"]) {
+    if (!target.predictions[source] && legacy.predictions?.[source]) {
+      target.predictions[source] = legacy.predictions[source];
+    }
+  }
+  if (!target.kickoffUtc && legacy.kickoffUtc) {
+    target.kickoffUtc = legacy.kickoffUtc;
+  }
+}
+
+// Re-key các entry legacy "espn-*" sang id ổn định "wc26-N" theo kickoff (khớp duy nhất để tránh
+// trận trùng giờ). Khắc phục dự đoán trận khai mạc bị ghi dưới id ESPN trước khi id được pin ổn định.
+async function migrateLegacyIds(matches = []) {
+  await loadTracking();
+  const idsByKickoff = new Map();
+  for (const match of matches) {
+    const ms = Date.parse(match.kickoffUtc || "");
+    if (!Number.isFinite(ms) || !match.id) {
+      continue;
+    }
+    (idsByKickoff.get(ms) || idsByKickoff.set(ms, []).get(ms)).push(match.id);
+  }
+
+  let changed = false;
+  for (const oldKey of Object.keys(data.matches)) {
+    if (!oldKey.startsWith("espn-")) {
+      continue;
+    }
+    const entry = data.matches[oldKey];
+    const ms = Date.parse(entry.kickoffUtc || "");
+    const candidates = Number.isFinite(ms) ? (idsByKickoff.get(ms) || []) : [];
+    if (candidates.length !== 1 || candidates[0] === oldKey) {
+      continue;
+    }
+    const newKey = candidates[0];
+    const target = data.matches[newKey] || { kickoffUtc: entry.kickoffUtc, predictions: { bongdaplus: null, oddsImplied: null }, actual: null, scored: false };
+    mergePredictionsInto(target, entry);
+    data.matches[newKey] = target;
+    delete data.matches[oldKey];
+    changed = true;
+  }
+
+  if (changed) {
+    scheduleSave();
+  }
+}
+
+// Snapshot dự đoán + kết quả thật của một trận (cho AI recap đối chiếu). null nếu chưa có.
+function getMatchPrediction(matchId) {
+  return data.matches[String(matchId)] || null;
+}
+
 loadTracking();
 
 module.exports = {
   recordPrediction,
   scoreFinishedMatches,
-  getStats
+  getStats,
+  getMatchPrediction,
+  migrateLegacyIds
 };

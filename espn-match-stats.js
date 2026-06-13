@@ -5,6 +5,7 @@
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { getArchivedTimeline, archiveFromSummary } = require("./match-timeline-archive.js");
 
 const storePath = path.join(__dirname, "data", "match-stats.json");
 const TOURNAMENT_START = "20260611";
@@ -18,6 +19,7 @@ let saveTimer = null;
 let workerStarted = false;
 let fetching = false;
 let getMatches = null;
+let translateCommentary = null;
 const rangeCache = { fetchedAt: 0, events: [] };
 
 async function loadStore() {
@@ -184,26 +186,41 @@ function parseTeamStats(summary) {
   return stats;
 }
 
-async function fetchStatsForMatch(match) {
+// Fetch ESPN summary 1 lần rồi vừa parse thông số, vừa đóng băng diễn biến (DRY: 1 request/trận).
+async function processFinishedMatch(match) {
+  const matchId = String(match.id);
+  const needsStats = !store.matches[matchId];
+  const needsTimeline = !getArchivedTimeline(matchId);
+  if (!needsStats && !needsTimeline) {
+    return false;
+  }
   const espnId = await resolveEspnId(match);
   if (!espnId) {
-    return null;
+    return false;
   }
   const summary = await fetchJson(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${encodeURIComponent(espnId)}`);
   if (!summary) {
-    return null;
+    return false;
   }
-  try {
-    const sides = sideByTeamId(summary);
-    const scorers = parseScorers(summary, sides);
-    const stats = parseTeamStats(summary);
-    if (!scorers.length && !Object.keys(stats).length) {
-      return null;
+
+  let changed = false;
+  if (needsStats) {
+    try {
+      const sides = sideByTeamId(summary);
+      const scorers = parseScorers(summary, sides);
+      const stats = parseTeamStats(summary);
+      if (scorers.length || Object.keys(stats).length) {
+        store.matches[matchId] = { espnId, scorers, stats, fetchedAt: new Date().toISOString() };
+        changed = true;
+      }
+    } catch {
+      // Parse lỗi không chặn việc đóng băng diễn biến.
     }
-    return { espnId, scorers, stats, fetchedAt: new Date().toISOString() };
-  } catch {
-    return null;
   }
+  if (needsTimeline) {
+    archiveFromSummary(matchId, espnId, summary.commentary, translateCommentary);
+  }
+  return changed;
 }
 
 async function runStatsCycle() {
@@ -215,13 +232,12 @@ async function runStatsCycle() {
     await loadStore();
     const matches = await getMatches();
     const pending = matches
-      .filter((match) => match.status === "finished" && !store.matches[String(match.id)])
+      .filter((match) => match.status === "finished"
+        && (!store.matches[String(match.id)] || !getArchivedTimeline(String(match.id))))
       .slice(0, MAX_PER_CYCLE);
     let changed = false;
     for (const match of pending) {
-      const entry = await fetchStatsForMatch(match);
-      if (entry) {
-        store.matches[String(match.id)] = entry;
+      if (await processFinishedMatch(match)) {
         changed = true;
       }
     }
@@ -242,6 +258,7 @@ function getMatchStats(matchId) {
 
 function initMatchStatsWorker(options = {}) {
   getMatches = options.getMatches || null;
+  translateCommentary = options.translateCommentary || translateCommentary;
   if (workerStarted) {
     return;
   }

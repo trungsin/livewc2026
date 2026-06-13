@@ -1645,3 +1645,121 @@ input {
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* Section thu gọn trong modal trận (bấm summary để mở) */
+.modal-collapse {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.modal-collapse > summary {
+  padding: 10px 12px;
+  background: #f1f5f6;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-collapse > summary::-webkit-details-marker {
+  display: none;
+}
+
+.modal-collapse > summary::after {
+  content: "▾";
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.modal-collapse[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.modal-collapse-body {
+  padding: 10px 12px;
+}
+
+/* Khối thông số bên trong collapse không cần viền/margin riêng nữa */
+.modal-collapse-body .match-stats-table-wrap {
+  margin: 0;
+  border: 0;
+}
+
+/* Tổng hợp sau trận (section đầu modal) */
+.match-recap {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(11, 111, 98, 0.06), rgba(11, 111, 98, 0.02));
+}
+
+.match-recap h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.recap-summary {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.recap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--surface);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.recap-table th,
+.recap-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.recap-table thead th {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.recap-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.recap-pred {
+  font-weight: 700;
+}
+
+.recap-verdict {
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.recap-verdict.is-hit {
+  color: var(--accent);
+}
+
+.recap-verdict.is-partial {
+  color: var(--gold);
+}
+
+.recap-verdict.is-miss {
+  color: var(--accent-2);
+}

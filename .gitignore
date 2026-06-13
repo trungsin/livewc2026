@@ -15,4 +15,6 @@ data/commentary-translation-cache.json
 data/prediction-tracking.json
 data/ai-predictions.json
 data/match-stats.json
+data/match-timelines.json
+data/match-recaps.json
 data/bongdaplus-score-cache.json

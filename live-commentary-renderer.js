@@ -77,8 +77,18 @@ function renderCommentaryList(entries) {
   return `<ul class="commentary-list">${entries.map(commentaryEntryHtml).join("")}</ul>`;
 }
 
-async function fetchMatchTimeline(espnId) {
-  const response = await fetch(`/api/match-timeline?espnId=${encodeURIComponent(espnId)}`, { cache: "no-store" });
+// Chấp nhận espnId dạng chuỗi (tường thuật live trang chủ) hoặc { espnId, matchId }.
+// matchId dùng cho trận đã kết thúc → server trả bản diễn biến đã đóng băng (còn cả khi mất espnId).
+async function fetchMatchTimeline(arg) {
+  const { espnId = "", matchId = "" } = typeof arg === "object" && arg !== null ? arg : { espnId: arg };
+  const params = new URLSearchParams();
+  if (matchId) {
+    params.set("matchId", matchId);
+  }
+  if (espnId) {
+    params.set("espnId", espnId);
+  }
+  const response = await fetch(`/api/match-timeline?${params.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }

@@ -11,10 +11,12 @@ const { translateViaCache } = require("./gemini-commentary-translation-fallback.
 const { translateTeamNamesInText, displayTeamName } = require("./team-names-vietnamese.js");
 const { buildBongdaplusPredictions } = require("./bongdaplus-predictions.js");
 const { buildMatchInsight } = require("./match-insight-builder.js");
-const { recordPrediction, scoreFinishedMatches, getStats } = require("./prediction-accuracy-tracker.js");
+const { recordPrediction, scoreFinishedMatches, getStats, getMatchPrediction, migrateLegacyIds } = require("./prediction-accuracy-tracker.js");
 const { getAiPrediction, ensureAiPrediction } = require("./ai-match-prediction-generator.js");
 const { getBongdaplusExactScore, ensureBongdaplusExactScore } = require("./bongdaplus-exact-score-ocr.js");
 const { initMatchStatsWorker, getMatchStats } = require("./espn-match-stats.js");
+const { getArchivedTimeline } = require("./match-timeline-archive.js");
+const { getMatchRecap, ensureMatchRecap } = require("./ai-match-recap-generator.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 4174);
@@ -376,6 +378,21 @@ function sourcePriority(match) {
   return 0;
 }
 
+// ID ổn định của trận: ưu tiên worldcup26 (nguồn có đủ 104 trận, id cố định cả mùa) hơn ESPN.
+// Tránh id "nhảy" espn-X ↔ wc26-N khi ESPN scoreboard bỏ trận đã xong — giữ dự đoán/thống kê khớp trận.
+function canonicalMatchId(rawIds = {}) {
+  if (rawIds.worldcup26 !== undefined && rawIds.worldcup26 !== null) {
+    return `wc26-${rawIds.worldcup26}`;
+  }
+  if (rawIds.espn !== undefined && rawIds.espn !== null) {
+    return `espn-${rawIds.espn}`;
+  }
+  if (rawIds.openfootball !== undefined && rawIds.openfootball !== null) {
+    return `openfootball-${rawIds.openfootball}`;
+  }
+  return null;
+}
+
 function shouldMergeMatch(existing, incoming) {
   if (teamPairKey(existing) !== teamPairKey(incoming)) {
     return false;
@@ -437,6 +454,9 @@ function mergeMatchInto(existing, incoming) {
   if (!existing.type && incoming.type) {
     existing.type = incoming.type;
   }
+
+  // Pin id về dạng ổn định (ưu tiên worldcup26) bất kể nguồn nào thắng các trường hiển thị.
+  existing.id = canonicalMatchId(existing.rawIds) || existing.id;
 }
 
 function mergeMatches(sourceLists) {
@@ -890,7 +910,14 @@ async function fetchJson(name, url) {
   }
 }
 
-async function buildMatchTimelinePayload(espnId) {
+async function buildMatchTimelinePayload(espnId, matchId = "") {
+  // Trận đã kết thúc được đóng băng diễn biến (theo matchId): trả bản lưu, không fetch lại.
+  // Giữ được diễn biến kể cả khi trận đã rớt khỏi ESPN scoreboard (mất espnId).
+  const archived = matchId ? getArchivedTimeline(matchId) : null;
+  if (archived) {
+    return { generatedAt: new Date().toISOString(), matchId, entries: archived, frozen: true, cache: { hit: true } };
+  }
+
   const key = `timeline-${espnId}`;
   const cached = cache.get(key);
   const now = Date.now();
@@ -943,6 +970,18 @@ function stripPredictionAnalysis(prediction) {
   return lightPrediction;
 }
 
+// Sinh AI recap (tổng hợp + đối chiếu dự đoán) cho trận đã xong, 1 lần/trận, chạy nền.
+// Diễn biến được đóng băng riêng trong stats worker (tái dùng cùng ESPN summary).
+function freezeFinishedMatches(matches = []) {
+  for (const match of matches) {
+    if (match.status !== "finished" || getMatchRecap(match.id)) {
+      continue;
+    }
+    const scorers = getMatchStats(match.id)?.scorers || [];
+    ensureMatchRecap(match, getMatchPrediction(match.id), scorers).catch(() => {});
+  }
+}
+
 async function buildLivePayload(force = false) {
   const key = "live";
   const cached = cache.get(key);
@@ -980,8 +1019,12 @@ async function buildLivePayload(force = false) {
     stats: match.status === "finished" ? getMatchStats(match.id) : null
   }));
 
+  // Gộp entry dự đoán legacy (id ESPN cũ) về id ổn định trước khi ghi/score để không lệch trận.
+  await migrateLegacyIds(matchesWithPredictions);
   await Promise.all(matchesWithPredictions.map((match) => recordPrediction(match, { prediction: match.prediction })));
   await scoreFinishedMatches(matchesWithPredictions);
+  // Đóng băng diễn biến + sinh AI recap cho trận đã xong (1 lần/trận, không chặn payload live).
+  freezeFinishedMatches(matchesWithPredictions);
 
   const payload = {
     generatedAt: new Date().toISOString(),
@@ -1080,6 +1123,7 @@ const server = http.createServer(async (req, res) => {
           ...cached.payload,
           aiPrediction: getAiPrediction(matchId),
           bongdaplusExactScore: getBongdaplusExactScore(matchId),
+          recap: getMatchRecap(matchId),
           cache: { hit: true, ttlMs: 5 * 60 * 1000 - (now - cached.createdAt) }
         });
         return;
@@ -1091,6 +1135,7 @@ const server = http.createServer(async (req, res) => {
         ...insight,
         aiPrediction: getAiPrediction(matchId),
         bongdaplusExactScore: getBongdaplusExactScore(matchId),
+        recap: getMatchRecap(matchId),
         cache: { hit: false, ttlMs: 5 * 60 * 1000 }
       };
       cache.set(key, { createdAt: now, payload });
@@ -1138,12 +1183,22 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/api/match-timeline") {
     const espnId = url.searchParams.get("espnId") || "";
-    if (!/^\d+$/.test(espnId)) {
+    const matchId = url.searchParams.get("matchId") || "";
+    // Cần ít nhất 1 khóa hợp lệ: matchId (bản đóng băng) hoặc espnId (fetch live).
+    if (matchId && !/^[\w-]+$/.test(matchId)) {
+      sendJson(res, 400, { error: "matchId không hợp lệ" });
+      return;
+    }
+    if (!matchId && !/^\d+$/.test(espnId)) {
+      sendJson(res, 400, { error: "Thiếu espnId/matchId hợp lệ" });
+      return;
+    }
+    if (espnId && !/^\d+$/.test(espnId)) {
       sendJson(res, 400, { error: "espnId không hợp lệ" });
       return;
     }
     try {
-      sendJson(res, 200, await buildMatchTimelinePayload(espnId));
+      sendJson(res, 200, await buildMatchTimelinePayload(espnId, matchId));
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -1164,7 +1219,8 @@ loadLocalSquads().then(() => {
   // Dự đoán AI sinh on-demand khi người dùng mở trận (endpoint /api/match-ai-prediction),
   // không còn worker nền tự sinh hàng loạt.
   initMatchStatsWorker({
-    getMatches: async () => (await buildLivePayload(false)).matches || []
+    getMatches: async () => (await buildLivePayload(false)).matches || [],
+    translateCommentary: translateCommentaryText
   });
   server.listen(port, host, () => {
     console.log(`LiveCup server listening on http://${host}:${port}`);
