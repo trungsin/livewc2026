@@ -1340,6 +1340,38 @@ input {
   background: #e7f5ef;
 }
 
+/* Nút 🔊 nghe tường thuật: đối xứng với nút ⓘ, neo góc trái trên score-block. */
+.match-speech-button {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  filter: grayscale(1);
+  box-shadow: 0 6px 16px rgba(15, 27, 38, 0.12);
+}
+
+.match-speech-button:hover {
+  border-color: var(--accent);
+  background: #e7f5ef;
+  filter: none;
+}
+
+.match-speech-button.is-listening {
+  border-color: var(--accent);
+  background: #e7f5ef;
+  filter: none;
+  box-shadow: 0 0 0 3px rgba(11, 111, 98, 0.18);
+}
+
 .match-row.clickable {
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;

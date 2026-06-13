@@ -139,6 +139,7 @@ function renderMatches() {
       </div>
       <div class="score-block">
         ${match.status === "live" || match.status === "halftime" ? `<button class="match-info-button" type="button" data-open-match-modal="${escapeHtml(match.id)}" aria-label="Mở nhận định và kèo" title="Mở nhận định và kèo">ⓘ</button>` : ""}
+        ${match.status === "live" || match.status === "halftime" ? `<button class="match-speech-button${liveSpeechActiveMatchId() === String(match.id) ? " is-listening" : ""}" type="button" data-toggle-speech="${escapeHtml(match.id)}" aria-label="Nghe tường thuật" title="${liveSpeechActiveMatchId() === String(match.id) ? "Tắt giọng đọc" : "Nghe sự kiện chính bằng giọng đọc"}">🔊</button>` : ""}
         <div class="score">${escapeHtml(match.homeScore)} - ${escapeHtml(match.awayScore)}</div>
         <div class="match-meta">${matchStatus(match)} / ${escapeHtml(match.group || "World Cup")}</div>
         <div class="match-meta">${escapeHtml(match.stadium || "")}</div>
@@ -185,6 +186,7 @@ async function refreshLiveCommentary(force = false) {
     const entries = await fetchMatchTimeline(espnId);
     if (selectedLiveMatch()?.rawIds?.espn === espnId) {
       liveCommentary.entries = entries;
+      feedLiveSpeechEntries(match.id, entries);
       renderTimeline();
     }
   } catch {
@@ -342,11 +344,29 @@ async function loadLiveData({ force = false } = {}) {
   }
 }
 
+// Trận đang nghe không còn live/halftime → ngừng nhận entry mới nhưng để câu
+// đang đọc kết thúc tự nhiên (release, không cancel — tránh cắt ngang câu FT/bàn thắng).
+function stopLiveSpeechIfMatchEnded() {
+  const listeningId = liveSpeechActiveMatchId();
+  if (!listeningId) {
+    return;
+  }
+  // Payload rỗng = fallback khi API lỗi tạm thời — đừng tắt oan, chờ poll sau.
+  if (!matches.length) {
+    return;
+  }
+  const listening = matches.find((item) => String(item.id) === listeningId);
+  if (!listening || (listening.status !== "live" && listening.status !== "halftime")) {
+    releaseLiveSpeech();
+  }
+}
+
 function applyPayload(payload) {
   lastPayload = payload;
   matches = Array.isArray(payload.matches) ? payload.matches : [];
   timeline = Array.isArray(payload.events) ? payload.events : [];
   trackFinishedTransitions(matches);
+  stopLiveSpeechIfMatchEnded();
   syncLiveCommentary();
   renderAll();
 }
@@ -364,6 +384,34 @@ matchList.addEventListener("click", (event) => {
   }
 });
 
+// Nút 🔊: bật/tắt giọng đọc sự kiện chính. Phải đăng ký TRƯỚC listener card
+// data-live-id để stopImmediatePropagation chặn được click lọt xuống card.
+matchList.addEventListener("click", (event) => {
+  const speechButton = event.target.closest("[data-toggle-speech]");
+  if (!speechButton) {
+    return;
+  }
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  const matchId = speechButton.dataset.toggleSpeech;
+  const result = toggleLiveSpeech(matchId);
+  if (result.reason) {
+    alert(result.reason);
+    return;
+  }
+  if (result.active && liveCommentary.matchId !== matchId) {
+    // Bật nghe cũng chuyển panel tường thuật sang trận đó (dùng chung vòng poll).
+    liveCommentary.matchId = matchId;
+    liveCommentary.entries = [];
+    renderTimeline();
+    refreshLiveCommentary(true);
+  } else if (result.active && liveCommentary.entries.length) {
+    // Panel đã bám sẵn trận này: prime ngay từ entries cache, khỏi đợi chu kỳ poll.
+    feedLiveSpeechEntries(matchId, liveCommentary.entries);
+  }
+  renderMatches();
+});
+
 matchList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-live-id]");
   if (!card) {
@@ -373,10 +421,16 @@ matchList.addEventListener("click", (event) => {
     document.querySelector("#events")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     return;
   }
+  // Giọng đọc bám theo panel tường thuật (feed dùng chung vòng poll của panel):
+  // đổi panel sang trận khác thì chuyển luôn giọng đọc, icon 🔊 di chuyển theo.
+  if (liveSpeechActiveMatchId() && liveSpeechActiveMatchId() !== card.dataset.liveId) {
+    toggleLiveSpeech(card.dataset.liveId);
+  }
   liveCommentary.matchId = card.dataset.liveId;
   liveCommentary.entries = [];
   renderTimeline();
   refreshLiveCommentary(true);
+  renderMatches();
   document.querySelector("#events")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
