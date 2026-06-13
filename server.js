@@ -1118,7 +1118,10 @@ const server = http.createServer(async (req, res) => {
 
       // AI sinh on-demand 5 tỉ số (chỉ trận upcoming ≤48h, gate trong ensureAiPrediction);
       // OCR bongdaplus đọc ảnh dự đoán tỉ số chính xác. Cả hai no-op khi thiếu key.
-      const insight = await buildMatchInsight({ match, prediction: match.prediction }).catch(() => null);
+      // Chỉ build insight (gọi ESPN ~8s) khi AI chưa cache — tránh chờ thừa lúc cache hit.
+      const insight = getAiPrediction(match.id)
+        ? null
+        : await buildMatchInsight({ match, prediction: match.prediction }).catch(() => null);
       const [aiPrediction, bongdaplusExactScore] = await Promise.all([
         ensureAiPrediction(match, { matches: livePayload.matches || [], standings: livePayload.standings || [], insight }),
         ensureBongdaplusExactScore(match.id, match.prediction?.url || "")
